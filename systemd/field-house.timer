@@ -1,0 +1,14 @@
+[Unit]
+Description=The Field House - ejecuta la actualización de fondo cada hora
+
+[Timer]
+# Corre en punto todas las horas (equivalente a "0 * * * *" en cron).
+OnCalendar=hourly
+# Si la sesión estuvo apagada/suspendida cuando debía dispararse, lo
+# ejecuta apenas sea posible en vez de esperar a la próxima hora en punto.
+# Esto ya cubre buena parte del caso "compu apagada durante un cambio de
+# franja" sin necesitar un timer @reboot aparte.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

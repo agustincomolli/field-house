@@ -1,0 +1,13 @@
+[Unit]
+Description=The Field House - actualiza el fondo de pantalla XFCE según hora y clima
+# No dependemos de network-online.target como Requires: si no hay red,
+# el propio script lo maneja (usa el fondo base y lo deja en el log).
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/field-house/bin/cambiar_fondo.sh
+
+# Variables de entorno de la sesión gráfica, necesarias porque los
+# servicios de usuario de systemd no siempre las heredan automáticamente.
+Environment=DISPLAY=:0

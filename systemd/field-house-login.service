@@ -1,0 +1,11 @@
+[Unit]
+Description=The Field House - corrige el fondo de pantalla al iniciar sesión
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/field-house/bin/cambiar_fondo.sh --reboot
+Environment=DISPLAY=:0
+
+[Install]
+WantedBy=graphical-session.target
