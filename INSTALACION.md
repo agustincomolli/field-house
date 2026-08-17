@@ -10,7 +10,7 @@ Este documento explica en detalle cómo funciona cada parte del programa, y cóm
 field-house/
 ├── bin/
 │   └── cambiar_fondo.sh              # El script que hace el trabajo
-├── fondos/                           # Las 7 imágenes de fondo
+├── fondos/                           # Las 9 imágenes de fondo
 ├── systemd/
 │   ├── field-house.service           # Servicio que ejecuta el script
 │   ├── field-house.timer             # Timer que lo dispara cada hora
@@ -62,6 +62,8 @@ HORA_INICIO_NOCHE="20:00"
 PASOS_TRANSICION=15
 PAUSA_ENTRE_PASOS="0.15"
 ESPERA_INICIAL_SEGUNDOS=15
+REINTENTOS_CLIMA_INICIAL=3
+ESPERA_REINTENTO_CLIMA=60
 EOF
 
 # 3. Servicios de systemd
@@ -91,13 +93,20 @@ Se editan en `config.conf`, variables `HORA_INICIO_AMANECER`, `HORA_INICIO_MEDIO
 
 ### Clima
 
-En cada ejecución se consulta `wttr.in/TU_CIUDAD?format=%C` (solo la condición climática, sin datos adicionales). Si el resultado contiene alguna de estas palabras (`rain`, `drizzle`, `shower`, `thunder`, `overcast`, `cloudy`, `mist`, `fog`), se reemplaza el fondo "base" de la franja actual por el de lluvia correspondiente:
+En cada ejecución se consulta `wttr.in/TU_CIUDAD?format=%C` (solo la condición climática, sin datos adicionales). El clima nublado y la lluvia se manejan como condiciones aparte y usan imágenes distintas:
 
-- Amanecer o mediodía nublado/lluvioso → `lluvia-dia.jpg`
-- Atardecer nublado/lluvioso → `lluvia-atardecer.jpg`
-- Noche nublada/lluviosa → `lluvia-noche.jpg`
+- **Nublado** (`overcast`, `cloudy`), se reemplaza el fondo "base" de la franja por la versión nublada:
+  - Amanecer o mediodía nublado → `nublado-dia.jpg`
+  - Atardecer nublado → `nublado-dia.jpg` (aún hay luz de día; no hay versión propia de atardecer)
+  - Noche nublada → `nublado-noche.jpg`
+- **Lluvia** (`rain`, `drizzle`, `shower`, `thunder`, `mist`, `fog`), se reemplaza por la versión lluviosa:
+  - Amanecer o mediodía lluvioso → `lluvia-dia.jpg`
+  - Atardecer lluvioso → `lluvia-atardecer.jpg`
+  - Noche lluviosa → `lluvia-noche.jpg`
 
-Si falla la consulta (sin internet, timeout de 8 segundos superado), se usa el fondo base de la franja sin intentar lluvia, y queda registrado en el log.
+Si falla la consulta (sin internet, timeout de 8 segundos superado), se usa el fondo base de la franja sin intentar lluvia ni nublado, y queda registrado en el log.
+
+**Reintento al iniciar sesión:** al arrancar la PC la red (en particular el WiFi) puede tardar en estar lista, a veces más que la espera inicial de `ESPERA_INICIAL_SEGUNDOS`. Por eso, en la ejecución de login (flag `--reboot`), si la consulta falla se aplica ya el fondo base de la franja y se reintenta el clima cada `ESPERA_REINTENTO_CLIMA` segundos (60s por defecto) hasta `REINTENTOS_CLIMA_INICIAL` veces (3 por defecto). Si un reintento tiene éxito, el fondo pasa al de clima con la transición normal; si se agotan, queda el fondo base hasta el próximo disparo horario. En las ejecuciones normales (timer horario) no hay reintento: un fallo se deja para la próxima hora.
 
 ### Transición de fundido
 
@@ -120,11 +129,11 @@ Hay tres archivos de systemd:
 | `field-house.timer` | Dispara ese servicio cada hora (`OnCalendar=hourly`), con `Persistent=true` |
 | `field-house-login.service` | Corre el script una vez al iniciar sesión gráfica, con el flag `--reboot` |
 
-`field-house-login.service` existe además del `Persistent=true` del timer porque ese último corre "apenas es posible" tras el arranque, que puede ser antes de que XFCE termine de inicializar `xfconf`. El flag `--reboot` le agrega una espera (`ESPERA_INICIAL_SEGUNDOS`, 15s por defecto) para evitar ese problema.
+`field-house-login.service` existe además del `Persistent=true` del timer porque ese último corre "apenas es posible" tras el arranque, que puede ser antes de que XFCE termine de inicializar `xfconf`. El flag `--reboot` le agrega una espera (`ESPERA_INICIAL_SEGUNDOS`, 15s por defecto) para evitar ese problema, y además activa el reintento de clima del arranque por si la red todavía no está lista (ver sección Clima).
 
 ### Verificación de imágenes
 
-Al arrancar, el script valida que las 7 imágenes de fondo existan en `CARPETA_FONDOS`. Si falta alguna, no aplica ningún cambio y lo deja registrado en el log — así te enterás de un nombre de archivo mal escrito o un reemplazo incompleto apenas corre el script, en vez de descubrirlo recién cuando le toque el turno a esa franja o clima puntual.
+Al arrancar, el script valida que las 9 imágenes de fondo existan en `CARPETA_FONDOS`. Si falta alguna, no aplica ningún cambio y lo deja registrado en el log — así te enterás de un nombre de archivo mal escrito o un reemplazo incompleto apenas corre el script, en vez de descubrirlo recién cuando le toque el turno a esa franja o clima puntual.
 
 ### Multi-monitor
 
@@ -139,10 +148,13 @@ Confirmá que el bus de sesión de usuario esté activo: `systemctl --user statu
 Los servicios de systemd de usuario deberían heredar `DISPLAY` y `DBUS_SESSION_BUS_ADDRESS` de la sesión gráfica, pero por las dudas el script y los `.service` los fuerzan explícitamente. Si tu sesión no es la `:0`, ajustá la variable `Environment=DISPLAY=:0` en los archivos `.service` (en `~/.config/systemd/user/`) y corré `systemctl --user daemon-reload`.
 
 **El clima no se detecta bien:**
-Probá `curl "https://wttr.in/TuCiudad?format=%C"` directamente en la terminal para ver qué texto exacto devuelve, y ajustá la lista de palabras clave en `bin/cambiar_fondo.sh` (`rain|drizzle|shower|thunder|overcast|cloudy|mist|fog`) si tu clima devuelve una palabra distinta.
+Probá `curl "https://wttr.in/TuCiudad?format=%C"` directamente en la terminal para ver qué texto exacto devuelve, y ajustá la lista de palabras clave en `bin/cambiar_fondo.sh` (nublado: `overcast|cloudy`; lluvia: `rain|drizzle|shower|thunder|mist|fog`) si tu clima devuelve una palabra distinta.
+
+**Al prender la compu no hay internet todavía y el fondo arranca sin clima:**
+Es normal: la red puede tardar en levantarse. En la ejecución de login el script aplica el fondo base y reintenta el clima cada `ESPERA_REINTENTO_CLIMA` segundos (60s) hasta `REINTENTOS_CLIMA_INICIAL` veces (3). Si con eso no alcanza (tu WiFi tarda más de ~3 minutos o no hay red), el fondo se corrige solo en el próximo disparo horario. Podés subir ambos valores en `config.conf` si tu conexión es especialmente lenta.
 
 **El log dice que faltan imágenes:**
-Revisá que los 7 archivos estén en `~/.local/share/field-house/fondos/` con los nombres exactos de la tabla del README (todos en minúscula, con guion medio, extensión `.jpg`).
+Revisá que los 9 archivos estén en `~/.local/share/field-house/fondos/` con los nombres exactos de la tabla del README (todos en minúscula, con guion medio, extensión `.jpg`).
 
 **La transición no se ve, cambia de golpe:**
 Confirmá que `imagemagick` esté instalado (`convert -version` no debería dar error). También revisá que `PASOS_TRANSICION` en `config.conf` no esté en `0`.

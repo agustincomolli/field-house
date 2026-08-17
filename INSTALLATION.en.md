@@ -10,7 +10,7 @@ This document explains in detail how each part of the program works, and how to 
 field-house/
 ├── bin/
 │   └── cambiar_fondo.sh              # The script that does the work
-├── fondos/                           # The 7 wallpaper images
+├── fondos/                           # The 9 wallpaper images
 ├── systemd/
 │   ├── field-house.service           # Service that runs the script
 │   ├── field-house.timer             # Timer that triggers it hourly
@@ -62,6 +62,8 @@ HORA_INICIO_NOCHE="20:00"
 PASOS_TRANSICION=15
 PAUSA_ENTRE_PASOS="0.15"
 ESPERA_INICIAL_SEGUNDOS=15
+REINTENTOS_CLIMA_INICIAL=3
+ESPERA_REINTENTO_CLIMA=60
 EOF
 
 # 3. systemd services
@@ -93,13 +95,20 @@ Edited in `config.conf`, variables `HORA_INICIO_AMANECER`, `HORA_INICIO_MEDIODIA
 
 ### Weather
 
-On every run, the script queries `wttr.in/YOUR_CITY?format=%C` (just the weather condition, no extra data). If the result contains any of these words (`rain`, `drizzle`, `shower`, `thunder`, `overcast`, `cloudy`, `mist`, `fog`), the "base" wallpaper for the current time slot is replaced with the matching rain wallpaper:
+On every run, the script queries `wttr.in/YOUR_CITY?format=%C` (just the weather condition, no extra data). Overcast weather and rain are handled as separate conditions and use different images:
 
-- Overcast/rainy sunrise or midday → `lluvia-dia.jpg`
-- Overcast/rainy sunset → `lluvia-atardecer.jpg`
-- Overcast/rainy night → `lluvia-noche.jpg`
+- **Overcast** (`overcast`, `cloudy`), the "base" wallpaper for the current time slot is replaced with the matching overcast wallpaper:
+  - Overcast sunrise or midday → `nublado-dia.jpg`
+  - Overcast sunset → `nublado-dia.jpg` (there's still daylight; there's no separate sunset version)
+  - Overcast night → `nublado-noche.jpg`
+- **Rain** (`rain`, `drizzle`, `shower`, `thunder`, `mist`, `fog`), replaced with the matching rainy wallpaper:
+  - Rainy sunrise or midday → `lluvia-dia.jpg`
+  - Rainy sunset → `lluvia-atardecer.jpg`
+  - Rainy night → `lluvia-noche.jpg`
 
-If the query fails (no internet, 8-second timeout exceeded), the base wallpaper for the time slot is used without attempting rain, and it's logged.
+If the query fails (no internet, 8-second timeout exceeded), the base wallpaper for the time slot is used without attempting rain or overcast, and it's logged.
+
+**Retry at login:** when the computer boots, the network (especially Wi-Fi) can take a while to come up, sometimes longer than the initial wait from `ESPERA_INICIAL_SEGUNDOS`. So, on the login run (`--reboot` flag), if the query fails the base wallpaper for the time slot is applied right away and the weather is retried every `ESPERA_REINTENTO_CLIMA` seconds (60s by default) up to `REINTENTOS_CLIMA_INICIAL` times (3 by default). If a retry succeeds, the wallpaper crossfades to the weather version; if they run out, the base wallpaper stays until the next hourly trigger. Regular runs (the hourly timer) don't retry: a failure is left for the next hour.
 
 ### Crossfade transition
 
@@ -122,11 +131,11 @@ There are three systemd files:
 | `field-house.timer` | Triggers that service every hour (`OnCalendar=hourly`), with `Persistent=true` |
 | `field-house-login.service` | Runs the script once at graphical login, with the `--reboot` flag |
 
-`field-house-login.service` exists in addition to the timer's `Persistent=true` because the latter runs "as soon as possible" after boot, which can be before XFCE finishes initializing `xfconf`. The `--reboot` flag adds a delay (`ESPERA_INICIAL_SEGUNDOS`, 15s by default) to avoid that issue.
+`field-house-login.service` exists in addition to the timer's `Persistent=true` because the latter runs "as soon as possible" after boot, which can be before XFCE finishes initializing `xfconf`. The `--reboot` flag adds a delay (`ESPERA_INICIAL_SEGUNDOS`, 15s by default) to avoid that issue, and it also enables the boot-time weather retry in case the network isn't ready yet (see the Weather section).
 
 ### Image verification
 
-On startup, the script checks that all 7 wallpaper images exist in `CARPETA_FONDOS`. If any is missing, it doesn't apply any change and logs it — so you find out about a misspelled filename or an incomplete replacement as soon as the script runs, instead of discovering it only when that particular time slot or weather condition comes up.
+On startup, the script checks that all 9 wallpaper images exist in `CARPETA_FONDOS`. If any is missing, it doesn't apply any change and logs it — so you find out about a misspelled filename or an incomplete replacement as soon as the script runs, instead of discovering it only when that particular time slot or weather condition comes up.
 
 ### Multi-monitor
 
@@ -141,10 +150,13 @@ Confirm the user session bus is active: `systemctl --user status` with no argume
 systemd user services should inherit `DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` from the graphical session, but just in case, the script and the `.service` files set them explicitly. If your session isn't `:0`, adjust the `Environment=DISPLAY=:0` line in the `.service` files (in `~/.config/systemd/user/`) and run `systemctl --user daemon-reload`.
 
 **Weather isn't detected correctly:**
-Try `curl "https://wttr.in/YourCity?format=%C"` directly in the terminal to see the exact text it returns, and adjust the keyword list in `bin/cambiar_fondo.sh` (`rain|drizzle|shower|thunder|overcast|cloudy|mist|fog`) if your weather returns a different word.
+Try `curl "https://wttr.in/YourCity?format=%C"` directly in the terminal to see the exact text it returns, and adjust the keyword lists in `bin/cambiar_fondo.sh` (overcast: `overcast|cloudy`; rain: `rain|drizzle|shower|thunder|mist|fog`) if your weather returns a different word.
+
+**There's no internet yet when the computer turns on, so the wallpaper starts without weather:**
+That's expected: the network can take a moment to come up. On the login run the script applies the base wallpaper and retries the weather every `ESPERA_REINTENTO_CLIMA` seconds (60s) up to `REINTENTOS_CLIMA_INICIAL` times (3). If that isn't enough (your Wi-Fi takes more than ~3 minutes, or there's no network at all), the wallpaper corrects itself on the next hourly trigger. You can raise both values in `config.conf` if your connection is especially slow.
 
 **The log says images are missing:**
-Check that all 7 files are in `~/.local/share/field-house/fondos/` with the exact names from the README's table (all lowercase, hyphen-separated, `.jpg` extension).
+Check that all 9 files are in `~/.local/share/field-house/fondos/` with the exact names from the README's table (all lowercase, hyphen-separated, `.jpg` extension).
 
 **The transition isn't visible, it just snaps:**
 Confirm `imagemagick` is installed (`convert -version` shouldn't error out). Also check that `PASOS_TRANSICION` in `config.conf` isn't `0`.

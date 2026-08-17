@@ -7,7 +7,7 @@ Automatically changes your **XFCE** desktop wallpaper (Linux Mint XFCE, Xubuntu,
 ## Features
 
 - 🕐 **Fixed, configurable time slots**: sunrise, midday, sunset, and night, with whatever schedule you define.
-- 🌧️ **Real-time weather**: if it's raining or overcast, uses a different image depending on the time of day (daytime, sunset, or night).
+- 🌧️ **Real-time weather**: if it's overcast or raining, uses a different image depending on the time of day (daytime, sunset, or night).
 - 🎨 **Crossfade transition** between one wallpaper and the next (optional, requires ImageMagick).
 - 📍 **Automatic location detection** during installation, with user confirmation.
 - ⚙️ **No-sudo installation**, everything lives in your user's standard directories (XDG Base Directory).
@@ -66,7 +66,7 @@ It will ask whether you want to keep your configuration and logs in case you rei
 
 ## Using your own images
 
-If you want to replace the 7 included images with your own, they need to go in `~/.local/share/field-house/fondos/` with these exact names:
+If you want to replace the 9 included images with your own, they need to go in `~/.local/share/field-house/fondos/` with these exact names:
 
 | File | Moment |
 |---|---|
@@ -74,9 +74,13 @@ If you want to replace the 7 included images with your own, they need to go in `
 | `mediodia.jpg` | Midday |
 | `tarde.jpg` | Sunset |
 | `noche.jpg` | Night |
-| `lluvia-dia.jpg` | Overcast/rainy sunrise or midday |
-| `lluvia-atardecer.jpg` | Overcast/rainy sunset |
-| `lluvia-noche.jpg` | Overcast/rainy night |
+| `nublado-dia.jpg` | Overcast sunrise or midday |
+| `nublado-noche.jpg` | Overcast night |
+| `lluvia-dia.jpg` | Rainy sunrise or midday |
+| `lluvia-atardecer.jpg` | Rainy sunset |
+| `lluvia-noche.jpg` | Rainy night |
+
+> Note: an overcast sunset uses `nublado-dia.jpg` (there's still daylight); there's no separate "overcast" image for sunset.
 
 > Note: the folder is named `fondos` (Spanish for "wallpapers") and the filenames themselves stay in Spanish, since they're read directly by the script and by `config.conf`. Only the documentation is translated.
 

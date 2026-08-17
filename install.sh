@@ -197,6 +197,12 @@ PAUSA_ENTRE_PASOS="0.15"
 # Espera en segundos antes de aplicar el fondo al iniciar sesión, para
 # darle tiempo a XFCE a estar listo.
 ESPERA_INICIAL_SEGUNDOS=15
+
+# Al iniciar sesión, si la red todavía no está lista (WiFi lentos, etc.),
+# se aplica el fondo base de la franja y se reintenta el clima cada
+# ESPERA_REINTENTO_CLIMA segundos, hasta REINTENTOS_CLIMA_INICIAL veces.
+REINTENTOS_CLIMA_INICIAL=3
+ESPERA_REINTENTO_CLIMA=60
 EOF
 
 success "Configuración guardada en $CONFIG_FILE"

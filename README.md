@@ -7,7 +7,7 @@ Cambia automáticamente el fondo de pantalla de **XFCE** (Linux Mint XFCE, Xubun
 ## Características
 
 - 🕐 **Franjas horarias fijas y configurables**: amanecer, mediodía, atardecer y noche, con los horarios que vos definas.
-- 🌧️ **Clima en tiempo real**: si está lloviendo o nublado, usa una imagen distinta según el momento del día (día, atardecer o noche).
+- 🌧️ **Clima en tiempo real**: si está nublado o lloviendo, usa una imagen distinta según el momento del día (día, atardecer o noche).
 - 🎨 **Transición de fundido** entre un fondo y el siguiente (opcional, requiere ImageMagick).
 - 📍 **Detección automática de ubicación** durante la instalación, con confirmación del usuario.
 - ⚙️ **Instalación sin sudo**, todo en las rutas estándar de tu usuario (XDG Base Directory).
@@ -66,7 +66,7 @@ Te va a preguntar si querés conservar tu configuración y logs por si reinstal�
 
 ## Usar tus propias imágenes
 
-Si querés reemplazar las 7 imágenes incluidas por las tuyas, tienen que ir en `~/.local/share/field-house/fondos/` con estos nombres exactos:
+Si querés reemplazar las 9 imágenes incluidas por las tuyas, tienen que ir en `~/.local/share/field-house/fondos/` con estos nombres exactos:
 
 | Archivo | Momento |
 |---|---|
@@ -74,9 +74,13 @@ Si querés reemplazar las 7 imágenes incluidas por las tuyas, tienen que ir en 
 | `mediodia.jpg` | Medio día |
 | `tarde.jpg` | Atardecer |
 | `noche.jpg` | Noche |
-| `lluvia-dia.jpg` | Amanecer o mediodía nublado/lluvioso |
-| `lluvia-atardecer.jpg` | Atardecer nublado/lluvioso |
-| `lluvia-noche.jpg` | Noche nublada/lluviosa |
+| `nublado-dia.jpg` | Amanecer o mediodía nublado |
+| `nublado-noche.jpg` | Noche nublada |
+| `lluvia-dia.jpg` | Amanecer o mediodía lluvioso |
+| `lluvia-atardecer.jpg` | Atardecer lluvioso |
+| `lluvia-noche.jpg` | Noche lluviosa |
+
+> Nota: el atardecer nublado usa `nublado-dia.jpg` (aún hay luz de día); no existe una versión "nublado" propia del atardecer.
 
 ## Documentación técnica
 

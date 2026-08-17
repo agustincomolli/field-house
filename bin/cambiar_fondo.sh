@@ -46,6 +46,12 @@ LOG="$STATE_DIR/log.txt"
 
 mkdir -p "$STATE_DIR"
 
+# Cierra la puerta a que el timer y el servicio de login corran el script a
+# la vez (pasa al arrancar) y se pisen recetas de transición. El lock se
+# libera solo cuando el script termina.
+exec 9>"$STATE_DIR/lock"
+flock 9
+
 # ----------------------------------------------------------------------------
 # FUNCIONES
 # ----------------------------------------------------------------------------
@@ -68,7 +74,7 @@ hora_a_minutos() {
 # "last-image" de xfconf (una por monitor/workspace), sin transición.
 aplicar_fondo() {
     local imagen="$1"
-    for prop in $(xfconf-query -c xfce4-desktop -l | grep last-image); do
+    for prop in $(xfconf-query -c xfce4-desktop -l | grep 'last-image$'); do
         xfconf-query -c xfce4-desktop -p "$prop" -s "$imagen"
     done
 }
@@ -78,7 +84,7 @@ aplicar_fondo() {
 # tomando la primera propiedad "last-image" que encuentre.
 obtener_fondo_actual() {
     local prop
-    prop=$(xfconf-query -c xfce4-desktop -l | grep last-image | head -n 1)
+    prop=$(xfconf-query -c xfce4-desktop -l | grep 'last-image$' | head -n 1)
     if [ -n "$prop" ]; then
         xfconf-query -c xfce4-desktop -p "$prop"
     fi
@@ -123,6 +129,13 @@ transicionar_fondo() {
     rm -rf "$tmp_transicion"
 }
 
+# consultar_clima
+# Consulta wttr.in una sola vez y devuelve la condición en minúscula
+# (cadena vacía si no se pudo obtener, por ejemplo sin internet).
+consultar_clima() {
+    curl -s -m 8 "https://wttr.in/${CIUDAD}?format=%C" | tr '[:upper:]' '[:lower:]'
+}
+
 # ----------------------------------------------------------------------------
 # 0) Cargar configuración
 # ----------------------------------------------------------------------------
@@ -146,11 +159,15 @@ source "$CONFIG_FILE"
 : "${PASOS_TRANSICION:=15}"
 : "${PAUSA_ENTRE_PASOS:=0.15}"
 : "${ESPERA_INICIAL_SEGUNDOS:=15}"
+: "${REINTENTOS_CLIMA_INICIAL:=3}"
+: "${ESPERA_REINTENTO_CLIMA:=60}"
 
 FONDO_AMANECER="$CARPETA_FONDOS/amanecer.jpg"
 FONDO_MEDIODIA="$CARPETA_FONDOS/mediodia.jpg"
 FONDO_ATARDECER="$CARPETA_FONDOS/tarde.jpg"
 FONDO_NOCHE="$CARPETA_FONDOS/noche.jpg"
+FONDO_NUBLADO_DIA="$CARPETA_FONDOS/nublado-dia.jpg"
+FONDO_NUBLADO_NOCHE="$CARPETA_FONDOS/nublado-noche.jpg"
 FONDO_LLUVIA_DIA="$CARPETA_FONDOS/lluvia-dia.jpg"
 FONDO_LLUVIA_ATARDECER="$CARPETA_FONDOS/lluvia-atardecer.jpg"
 FONDO_LLUVIA_NOCHE="$CARPETA_FONDOS/lluvia-noche.jpg"
@@ -177,6 +194,7 @@ fi
 
 FALTANTES=()
 for f in "$FONDO_AMANECER" "$FONDO_MEDIODIA" "$FONDO_ATARDECER" "$FONDO_NOCHE" \
+         "$FONDO_NUBLADO_DIA" "$FONDO_NUBLADO_NOCHE" \
          "$FONDO_LLUVIA_DIA" "$FONDO_LLUVIA_ATARDECER" "$FONDO_LLUVIA_NOCHE"; do
     [ -f "$f" ] || FALTANTES+=("$f")
 done
@@ -197,8 +215,8 @@ MIN_MEDIODIA=$(hora_a_minutos "$HORA_INICIO_MEDIODIA")
 MIN_ATARDECER=$(hora_a_minutos "$HORA_INICIO_ATARDECER")
 MIN_NOCHE=$(hora_a_minutos "$HORA_INICIO_NOCHE")
 
-# FRANJA_CLIMA indica qué fondo de lluvia corresponde si llueve/está
-# nublado: "dia" (amanecer o mediodía), "atardecer" o "noche".
+# FRANJA_CLIMA indica qué fondo de nublado/lluvia corresponde según la
+# franja: "dia" (amanecer o mediodía), "atardecer" o "noche".
 if [ "$AHORA_MIN" -ge "$MIN_AMANECER" ] && [ "$AHORA_MIN" -lt "$MIN_MEDIODIA" ]; then
     FONDO="$FONDO_AMANECER"
     MOMENTO="amanecer"
@@ -218,15 +236,53 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# 3) Consultar el clima actual y, si llueve/está nublado, usar el fondo
-#    de lluvia correspondiente a la franja (día, atardecer o noche).
+# 3) Consultar el clima actual y, si está nublado o llueve, usar el fondo
+#    correspondiente a la franja (día, atardecer o noche). El "nublado" y la
+#    "lluvia" son condiciones distintas y usan imágenes distintas; durante el
+#    atardecer nublado se usa la imagen "nublado-dia" (aún hay luz de día).
+#
+#    Al iniciar sesión (--reboot) la red puede estar todavía levantándose
+#    (por ejemplo un WiFi que tarda en conectarse), así que si la consulta
+#    falla se aplica ya el fondo base de la franja y se reintenta cada
+#    ESPERA_REINTENTO_CLIMA segundos, hasta REINTENTOS_CLIMA_INICIAL veces.
 # ----------------------------------------------------------------------------
+# DISPLAY y DBUS son necesarios porque systemd/cron pueden correr esto sin
+# que las variables de la sesión gráfica estén heredadas.
 
-CLIMA=$(curl -s -m 8 "https://wttr.in/${CIUDAD}?format=%C" | tr '[:upper:]' '[:lower:]')
+export DISPLAY="${DISPLAY:-:0}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
+
+CLIMA=""
+if [ "${1:-}" = "--reboot" ]; then
+    intento=1
+    while [ "$intento" -le "$REINTENTOS_CLIMA_INICIAL" ]; do
+        CLIMA=$(consultar_clima)
+        [ -n "$CLIMA" ] && break
+        if [ "$intento" -lt "$REINTENTOS_CLIMA_INICIAL" ]; then
+            log "Sin internet todavía (intento $intento/$REINTENTOS_CLIMA_INICIAL), se aplica el fondo base y se reintenta en ${ESPERA_REINTENTO_CLIMA}s."
+            transicionar_fondo "$FONDO"
+            sleep "$ESPERA_REINTENTO_CLIMA"
+        fi
+        intento=$((intento + 1))
+    done
+else
+    CLIMA=$(consultar_clima)
+fi
 
 if [ -z "$CLIMA" ]; then
     log "No se pudo consultar el clima, se usa fondo base ($MOMENTO)"
-elif echo "$CLIMA" | grep -qE "rain|drizzle|shower|thunder|overcast|cloudy|mist|fog"; then
+elif echo "$CLIMA" | grep -qE "overcast|cloudy"; then
+    case "$FRANJA_CLIMA" in
+        dia|atardecer)
+            FONDO="$FONDO_NUBLADO_DIA"
+            MOMENTO="nublado de día ($CLIMA)"
+            ;;
+        noche)
+            FONDO="$FONDO_NUBLADO_NOCHE"
+            MOMENTO="nublado de noche ($CLIMA)"
+            ;;
+    esac
+elif echo "$CLIMA" | grep -qE "rain|drizzle|shower|thunder|mist|fog"; then
     case "$FRANJA_CLIMA" in
         dia)
             FONDO="$FONDO_LLUVIA_DIA"
@@ -246,11 +302,6 @@ fi
 # ----------------------------------------------------------------------------
 # 4) Aplicar el fondo elegido (con transición si es posible)
 # ----------------------------------------------------------------------------
-# DISPLAY y DBUS son necesarios porque systemd/cron pueden correr esto sin
-# que las variables de la sesión gráfica estén heredadas.
-
-export DISPLAY="${DISPLAY:-:0}"
-export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
 
 transicionar_fondo "$FONDO"
 
