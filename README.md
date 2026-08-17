@@ -23,6 +23,7 @@ Requisitos: Linux Mint XFCE (o cualquier distro con XFCE) con `systemd`, `curl`,
 ```bash
 git clone https://github.com/TU_USUARIO/field-house.git
 cd field-house
+chmod +x ./install.sh
 ./install.sh
 ```
 
