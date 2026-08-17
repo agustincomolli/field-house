@@ -6,13 +6,15 @@ Automatically changes your **XFCE** desktop wallpaper (Linux Mint XFCE, Xubuntu,
 
 ## Features
 
-- 🕐 **Fixed, configurable time slots**: sunrise, midday, sunset, and night, with whatever schedule you define.
+- 🕐 **Fixed, configurable time slots**: sunrise, midday, sunset, and night, with whatever schedule you define (**or automatic, based on actual sunrise/sunset**, chosen during installation).
 - 🌧️ **Real-time weather**: if it's overcast or raining, uses a different image depending on the time of day (daytime, sunset, or night).
 - 🎨 **Crossfade transition** between one wallpaper and the next (optional, requires ImageMagick).
 - 📍 **Automatic location detection** during installation, with user confirmation.
 - ⚙️ **No-sudo installation**, everything lives in your user's standard directories (XDG Base Directory).
 - 🔁 **Automatic execution via systemd** (hourly timer + login correction), no manual `crontab` editing.
 - 🖥️ **Multi-monitor**: updates the wallpaper on every monitor and workspace.
+- 🛡️ **Robust by design**: validates configuration and dependencies at startup, fails with clear messages instead of silently, uses secure temp files with automatic cleanup, rate-limits weather queries with a cache, and rotates the log so it never grows unbounded.
+- 🔎 **Diagnostics**: `--dry-run` shows which wallpaper would be applied without touching anything, great for testing or reporting issues.
 
 ## Installation
 
@@ -26,9 +28,12 @@ cd field-house
 
 The installer will:
 1. Automatically detect your location (by IP) and ask you to confirm it, or let you type it manually if you prefer.
-2. Copy the program and images to `~/.local/share/field-house`.
-3. Generate your configuration at `~/.config/field-house/config.conf`.
-4. Enable the `systemd` timers so the wallpaper updates on its own.
+2. Ask whether you want **fixed** times (e.g. sunrise 06:00 → night 20:00, always the same) or **automatic** times based on the actual sunrise/sunset in your city.
+3. Copy the program and images to `~/.local/share/field-house`.
+4. Generate your configuration at `~/.config/field-house/config.conf`.
+5. Enable the `systemd` timers so the wallpaper updates on its own.
+
+> ⚠️ **Reinstalling = factory install.** If you already have a previous install, `install.sh` detects it and wipes it completely before copying the new one: program, images (including any you customized), configuration, and previous logs. Nothing from the old install is kept.
 
 ImageMagick is optional, only needed if you want the crossfade transition between wallpapers:
 
@@ -46,6 +51,15 @@ systemctl --user status field-house.timer
 
 # Force an update right now
 ~/.local/share/field-house/bin/cambiar_fondo.sh
+
+# Simulate without touching anything (which wallpaper would be applied)
+~/.local/share/field-house/bin/cambiar_fondo.sh --dry-run
+
+# Full help (options, paths)
+~/.local/share/field-house/bin/cambiar_fondo.sh --help
+
+# Show version
+~/.local/share/field-house/bin/cambiar_fondo.sh --version
 
 # View the log
 tail -f ~/.local/state/field-house/log.txt

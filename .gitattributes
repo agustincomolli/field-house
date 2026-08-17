@@ -1,0 +1,13 @@
+# ---------------------------------------------------------------------------
+# Líneas de fin (END OF LINE)
+# ---------------------------------------------------------------------------
+# Fuerza terminaciones LF (Unix) para scripts y workflows, incluso al clonar
+# o editar en Windows (donde git con core.autocrlf=true tendería a generar
+# CRLF). Un CRLF en un script bash rompe heredocs y hace fallar shellcheck
+# (SC1017), así que esto es parte de la portabilidad Linux del proyecto.
+
+* text=auto
+
+*.sh text eol=lf
+*.md text eol=lf
+.github/workflows/*.yml text eol=lf

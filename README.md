@@ -6,13 +6,15 @@ Cambia automáticamente el fondo de pantalla de **XFCE** (Linux Mint XFCE, Xubun
 
 ## Características
 
-- 🕐 **Franjas horarias fijas y configurables**: amanecer, mediodía, atardecer y noche, con los horarios que vos definas.
+- 🕐 **Franjas horarias fijas y configurables**: amanecer, mediodía, atardecer y noche, con los horarios que vos definas (**o automáticas según la salida/puesta del sol**, elegible durante la instalación).
 - 🌧️ **Clima en tiempo real**: si está nublado o lloviendo, usa una imagen distinta según el momento del día (día, atardecer o noche).
 - 🎨 **Transición de fundido** entre un fondo y el siguiente (opcional, requiere ImageMagick).
 - 📍 **Detección automática de ubicación** durante la instalación, con confirmación del usuario.
 - ⚙️ **Instalación sin sudo**, todo en las rutas estándar de tu usuario (XDG Base Directory).
 - 🔁 **Ejecución automática con systemd** (timer por hora + corrección al iniciar sesión), sin tocar `crontab` a mano.
 - 🖥️ **Multi-monitor**: actualiza el fondo en todos los monitores y espacios de trabajo.
+- 🛡️ **Robusto por diseño**: valida la configuración y las dependencias al arrancar, falla con mensajes claros en vez de hacerlo en silencio, usa temporales seguros con limpieza automática, limita la consulta de clima con caché, y rota el log para que nunca crezca sin control.
+- 🔎 **Diagnóstico**: `--dry-run` muestra qué fondo se aplicaría sin tocar nada, ideal para probar o reportar problemas.
 
 ## Instalación
 
@@ -26,9 +28,12 @@ cd field-house
 
 El instalador va a:
 1. Detectar tu ubicación automáticamente (por IP) y pedirte que la confirmes, o que la ingreses a mano si preferís.
-2. Copiar el programa y las imágenes a `~/.local/share/field-house`.
-3. Generar tu configuración en `~/.config/field-house/config.conf`.
-4. Habilitar los timers de `systemd` para que el fondo se actualice solo.
+2. Preguntarte si querés horarios **fijos** (p. ej. amanecer 06:00 → noche 20:00, siempre iguales) o **automáticos** según la salida y puesta real del sol en tu ciudad.
+3. Copiar el programa y las imágenes a `~/.local/share/field-house`.
+4. Generar tu configuración en `~/.config/field-house/config.conf`.
+5. Habilitar los timers de `systemd` para que el fondo se actualice solo.
+
+> ⚠️ **Reinstalar = instalar de fábrica.** Si ya tenés una instalación previa, `install.sh` la detecta y la borra por completo antes de copiar la nueva: programa, imágenes (incluidas las que hayas personalizado), configuración y logs anteriores. Nada de la instalación vieja se conserva.
 
 ImageMagick es opcional, solo hace falta si querés la transición de fundido entre fondos:
 
@@ -46,6 +51,15 @@ systemctl --user status field-house.timer
 
 # Forzar una actualización ahora mismo
 ~/.local/share/field-house/bin/cambiar_fondo.sh
+
+# Simular sin tocar nada (qué fondo se aplicaría ahora)
+~/.local/share/field-house/bin/cambiar_fondo.sh --dry-run
+
+# Ver la ayuda completa (opciones, rutas)
+~/.local/share/field-house/bin/cambiar_fondo.sh --help
+
+# Ver la versión
+~/.local/share/field-house/bin/cambiar_fondo.sh --version
 
 # Ver el log
 tail -f ~/.local/state/field-house/log.txt

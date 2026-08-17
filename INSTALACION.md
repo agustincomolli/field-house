@@ -17,6 +17,8 @@ field-house/
 │   └── field-house-login.service     # Servicio que corre al iniciar sesión
 ├── .github/workflows/
 │   └── shellcheck.yml                # CI: valida los scripts en cada push
+├── .gitattributes                    # Fuerza LF (Unix) en scripts y workflows
+├── CHANGELOG.md                      # Registro de cambios por versión
 ├── install.sh                        # Instalador interactivo
 ├── uninstall.sh                      # Desinstalador
 ├── README.md / README.en.md
@@ -55,6 +57,7 @@ mkdir -p ~/.config/field-house
 cat << 'EOF' > ~/.config/field-house/config.conf
 CARPETA_FONDOS="$HOME/.local/share/field-house/fondos"
 CIUDAD="CanuelasAR"
+MODO_HORARIOS="fijo"
 HORA_INICIO_AMANECER="06:00"
 HORA_INICIO_MEDIODIA="10:00"
 HORA_INICIO_ATARDECER="15:00"
@@ -64,6 +67,8 @@ PAUSA_ENTRE_PASOS="0.15"
 ESPERA_INICIAL_SEGUNDOS=15
 REINTENTOS_CLIMA_INICIAL=3
 ESPERA_REINTENTO_CLIMA=60
+TTL_CACHE_CLIMA=600
+MAX_LOG_BYTES=1048576
 EOF
 
 # 3. Servicios de systemd
@@ -74,26 +79,53 @@ systemctl --user enable --now field-house.timer
 systemctl --user enable field-house-login.service
 ```
 
-Reemplazá `CIUDAD="CanuelasAR"` por la tuya (sin espacios ni tildes; podés probar qué reconoce wttr.in con `curl "https://wttr.in/TuCiudad?format=%C"`).
+Reemplazá `CIUDAD="CanuelasAR"` por la tuya (sin espacios ni tildes; podés probar qué reconoce wttr.in con `curl "https://wttr.in/TuCiudad?format=%C"`). Acordate: los valores que faltan en un `config.conf` viejo se cubren con los valores por defecto del script, así que agregar variables nuevas no rompe instalaciones existentes.
+
+## Reinstalar / actualizar (instalación de fábrica)
+
+Para actualizar a una versión nueva, simplemente corré `./install.sh` de nuevo sobre el repo clonado. El instalador **detecta si ya hay una instalación previa** (programa, configuración, logs o unidades de systemd) y, tras el prompt de confirmación, **borra todo lo anterior antes de copiar la nueva**:
+
+- Programa e imágenes en `~/.local/share/field-house` (incluidas las imágenes que hayas personalizado)
+- Configuración y logs (`~/.config/field-house` y `~/.local/state/field-house`)
+- Todas las unidades de systemd de The Field House, incluidas eventuales sobrantes de versiones anteriores
+
+No se conserva ningún respaldo (ya no se genera `config.conf.bak`): reinstalar deja el equipo exactamente como recién instalado. Si querés conservar algo puntual (por ejemplo tu ciudad), anotálo antes o guardalo aparte. La alternativa para desinstalar conservando datos es `uninstall.sh`, que sí pregunta si querés guardar configuración y logs.
 
 ## Cómo funciona cada parte
 
-### Franjas horarias fijas
+### Franjas horarias
 
-El script usa bloques de horario del reloj, siempre iguales sin importar la época del año (a diferencia de una versión anterior de este proyecto que calculaba amanecer/atardecer reales — se simplificó a propósito, ver más abajo):
+El script usa bloques de horario para decidir qué fondo toca. Hay dos modos, elegibles en la instalación (`MODO_HORARIOS`):
 
-- Amanecer: `06:00` → `10:00`
-- Medio día: `10:00` → `15:00`
-- Atardecer: `15:00` → `20:00`
-- Noche: `20:00` → `06:00` (día siguiente)
+- **Fijo** (por defecto, el comportamiento original): horarios constantes del reloj, siempre iguales sin importar la época del año:
 
-Se editan en `config.conf`, variables `HORA_INICIO_AMANECER`, `HORA_INICIO_MEDIODIA`, `HORA_INICIO_ATARDECER`, `HORA_INICIO_NOCHE`.
+  - Amanecer: `06:00` → `10:00`
+  - Medio día: `10:00` → `15:00`
+  - Atardecer: `15:00` → `20:00`
+  - Noche: `20:00` → `06:00` (día siguiente)
 
-> **¿Por qué horas fijas y no el amanecer/atardecer real del día?** Porque simplifica bastante el script (no depende de una consulta extra a una API de horarios solares) y da un resultado más predecible: siempre sabés qué fondo vas a ver a determinada hora, sin que se corra con las estaciones.
+- **Automático** (`MODO_HORARIOS="auto"`): las franjas se calculan según la salida y puesta **real** del sol en tu ciudad (ver sección siguiente).
+
+En ambos modos los límites se pueden ajustar desde `config.conf`: en modo fijo, las variables `HORA_INICIO_AMANECER`, `HORA_INICIO_MEDIODIA`, `HORA_INICIO_ATARDECER`, `HORA_INICIO_NOCHE` son las que mandan; en modo auto funcionan como respaldo cuando la consulta del sol falla.
+
+> **¿Por qué horas fijas y no el amanecer/atardecer real del día?** Porque dan el resultado más predecible: siempre sabés qué fondo vas a ver a determinada hora, sin que se corra con las estaciones. Es la opción por defecto; si preferís seguirlo a las estaciones, elegí el modo automático en la instalación.
+
+#### Modo automático (MODO_HORARIOS="auto")
+
+En cada ejecución (con caché diaria, para no molestar a la API), se consulta `wttr.in/CIUDAD?format=j1` y se extraen la salida (`sunrise`) y la puesta (`sunset`) del sol del día:
+
+- **Amanecer** = hora de salida real del sol.
+- **Atardecer** = hora de puesta real del sol.
+- **Mediodía** = punto medio exacto entre salida y puesta.
+- **Noche** = puesta del sol + 2 horas (cuando ya oscureció del todo).
+
+El resultado se guarda en `~/.local/state/field-house/horarios-sol.cache` y se reutiliza durante el día (se vuelve a consultar al cambiar la fecha). Si la consulta falla (sin internet, ciudad inválida), el script avisa en el log y usa los horarios fijos de `config.conf`.
+
+> ⚠️ **Zona horaria.** El cálculo asume que el reloj de tu equipo está en la misma zona horaria que `CIUDAD` (el caso normal: ponés la ciudad donde vivís). Si la ciudad tuviera otra zona horaria que la de tu reloj, las franjas no coincidirían con el fondo esperado; en ese caso usá el modo fijo o ajustá la zona horaria del sistema.
 
 ### Clima
 
-En cada ejecución se consulta `wttr.in/TU_CIUDAD?format=%C` (solo la condición climática, sin datos adicionales). El clima nublado y la lluvia se manejan como condiciones aparte y usan imágenes distintas:
+En cada ejecución se consulta `wttr.in/TU_CIUDAD?format=%C` (solo la condición climática, sin datos adicionales). La consulta usa un timeout corto (`--connect-timeout 2 --max-time 6`): no espera más de 6 segundos en total, y no se cuelga en DNS. El clima nublado y la lluvia se manejan como condiciones aparte y usan imágenes distintas:
 
 - **Nublado** (`overcast`, `cloudy`), se reemplaza el fondo "base" de la franja por la versión nublada:
   - Amanecer o mediodía nublado → `nublado-dia.jpg`
@@ -104,13 +136,17 @@ En cada ejecución se consulta `wttr.in/TU_CIUDAD?format=%C` (solo la condición
   - Atardecer lluvioso → `lluvia-atardecer.jpg`
   - Noche lluviosa → `lluvia-noche.jpg`
 
-Si falla la consulta (sin internet, timeout de 8 segundos superado), se usa el fondo base de la franja sin intentar lluvia ni nublado, y queda registrado en el log.
+Si falla la consulta (sin internet, timeout superado, ciudad inválida), se usa el fondo base de la franja sin intentar lluvia ni nublado, y queda registrado en el log.
+
+**Caché de clima:** como la consulta es una llamada de red, el resultado se guarda en `~/.local/state/field-house/clima.cache` y se reutiliza durante `TTL_CACHE_CLIMA` segundos (10 minutos por defecto). Esto evita consultas redundantes cuando el timer horario y el servicio de login disparan casi en el mismo momento — algo que, a su vez, respeta el servicio gratuito de wttr.in.
 
 **Reintento al iniciar sesión:** al arrancar la PC la red (en particular el WiFi) puede tardar en estar lista, a veces más que la espera inicial de `ESPERA_INICIAL_SEGUNDOS`. Por eso, en la ejecución de login (flag `--reboot`), si la consulta falla se aplica ya el fondo base de la franja y se reintenta el clima cada `ESPERA_REINTENTO_CLIMA` segundos (60s por defecto) hasta `REINTENTOS_CLIMA_INICIAL` veces (3 por defecto). Si un reintento tiene éxito, el fondo pasa al de clima con la transición normal; si se agotan, queda el fondo base hasta el próximo disparo horario. En las ejecuciones normales (timer horario) no hay reintento: un fallo se deja para la próxima hora.
 
 ### Transición de fundido
 
 Si `imagemagick` está instalado, el script no cambia el fondo de golpe: genera una serie de imágenes intermedias mezclando la imagen anterior con la nueva en proporciones crecientes (`PASOS_TRANSICION`, 15 por defecto) y las va aplicando con una pequeña pausa entre cada una (`PAUSA_ENTRE_PASOS`, 0.15s), dando un efecto de fundido de ~2 segundos en total. Sin ImageMagick, o con `PASOS_TRANSICION=0`, el cambio es directo.
+
+Los frames se generan en un directorio temporal seguro (`mktemp`) que se limpia solo al terminar — incluso si el script se interrumpe con Ctrl+C o se corta la sesión. Cada frame se verifica antes de aplicarse: si la generación de una imagen intermedia fallara (por ejemplo una imagen de origen corrupta), se anota en el log y se continúa con la siguiente en lugar de dejar un fondo roto en silencio.
 
 ### Ejecución automática con systemd
 
@@ -137,7 +173,18 @@ Al arrancar, el script valida que las 9 imágenes de fondo existan en `CARPETA_F
 
 ### Multi-monitor
 
-El script recorre todas las propiedades `last-image` de xfconf (una por monitor/workspace) y las actualiza a todas, así que si tenés más de un monitor o varios espacios de trabajo, todos quedan sincronizados.
+El script recorre todas las propiedades `last-image` de xfconf (una por monitor/workspace) y las actualiza a todas, así que si tenés más de un monitor o varios espacios de trabajo, todos quedan sincronizados. La lista de propiedades se obtiene **una sola vez** por ejecución y se reutiliza en los pasos de la transición, evitando decenas de llamadas a `xfconf-query`.
+
+## Validaciones y comportamiento robusto
+
+El objetivo de diseño es **degradar con elegancia pero fallar con claridad**: el script sobrevive sin red, sin ImageMagick o sin una sesión XFCE lista, pero cuando algo está mal configurado lo anuncia bien y temprano, en vez de producir fondos raros o fallos silenciosos.
+
+- **Dependencias verificadas al inicio.** Antes de tocar nada, se comprueba que existan `curl`, `xfconf-query` (solo en ejecución real, no en `--dry-run`), `awk`, `grep`, `tr`, `seq`, `head` y `cut`. Si falta alguna, el script termina de inmediato con un mensaje en el log. ImageMagick (`convert`/`identify`) es opcional: solo genera un aviso.
+- **Configuración validada.** Tras cargar `config.conf` se validan: `CIUDAD` (solo letras/números y `. , _ -`, para no romper la URL de wttr.in), `MODO_HORARIOS` (`fijo` o `auto`), las `HORA_INICIO_*` (formato `HH:MM` válido), `PASOS_TRANSICION`, `PAUSA_ENTRE_PASOS` y los valores numéricos restantes, además de que `CARPETA_FONDOS` sea un directorio. Un valor inválido detiene la ejecución con un mensaje que dice qué variable está mal y cómo corregirla.
+- **Temporales seguros y limpios.** Los frames de la transición van a un directorio de `mktemp` (permisos privados), y un `trap` lo elimina al salir — normal o interrumpidamente. Si el proceso se caía a mitad en versiones viejas, quedaban carpetas huérfanas en `/tmp`; eso ya no pasa.
+- **Sin fallos silenciosos en xfconf.** Si alguna propiedad `last-image` falla al asignarse, se acumulan y se registran en el log (con las propiedades que fallaron). Si no hay ninguna propiedad `last-image` (perfil XFCE recién creado), se avisa explícitamente.
+- **Log rotado.** Cada línea es una ejecución (24/día), por lo que crece poco, pero aún así el log se rota a `log.txt.1` cuando supera `MAX_LOG_BYTES` (1 MiB por defecto), conservando solo la copia más reciente.
+- **`--dry-run` para diagnóstico.** `cambiar_fondo.sh --dry-run` (opcionalmente con `--reboot`) imprime la franja, el clima y el fondo que se aplicaría **sin** tocar xfconf, sin escribir logs ni estado, y sin esperas ni lock. Sirve para probar la lógica de clima/franjas en cualquier máquina, y es lo primero que pedimos en un reporte de problema.
 
 ## Solución de problemas
 
@@ -148,7 +195,31 @@ Confirmá que el bus de sesión de usuario esté activo: `systemctl --user statu
 Los servicios de systemd de usuario deberían heredar `DISPLAY` y `DBUS_SESSION_BUS_ADDRESS` de la sesión gráfica, pero por las dudas el script y los `.service` los fuerzan explícitamente. Si tu sesión no es la `:0`, ajustá la variable `Environment=DISPLAY=:0` en los archivos `.service` (en `~/.config/systemd/user/`) y corré `systemctl --user daemon-reload`.
 
 **El clima no se detecta bien:**
-Probá `curl "https://wttr.in/TuCiudad?format=%C"` directamente en la terminal para ver qué texto exacto devuelve, y ajustá la lista de palabras clave en `bin/cambiar_fondo.sh` (nublado: `overcast|cloudy`; lluvia: `rain|drizzle|shower|thunder|mist|fog`) si tu clima devuelve una palabra distinta.
+Probá `curl "https://wttr.in/TuCiudad?format=%C"` directamente en la terminal para ver qué texto exacto devuelve, y ajustá la lista de palabras clave en `bin/cambiar_fondo.sh` (nublado: `overcast|cloudy`; lluvia: `rain|drizzle|shower|thunder|mist|fog`) si tu clima devuelve una palabra distinta. Recordá que el resultado se reutiliza 10 minutos por el caché (`TTL_CACHE_CLIMA`); si cambiás la ciudad o querés verificar un cambio, podés borrar `~/.local/state/field-house/clima.cache` y correr el script de nuevo.
+
+**El log dice `AVISO: no se pudo obtener la salida/puesta del sol`:**
+Pasa con `MODO_HORARIOS="auto"` cuando la consulta a wttr.in (formato `j1`) falla o tu ciudad no la resuelve. No es grave: el script usa los horarios fijos de `config.conf` para esa corrida y lo intenta de nuevo en la próxima. Verificá internet o probá `curl "https://wttr.in/TuCiudad?format=j1"`.
+
+**Quiero pasar de horarios fijos a automáticos (o al revés):**
+Editá `MODO_HORARIOS` en `~/.config/field-house/config.conf` (`"fijo"` o `"auto"`) y corré `~/.local/share/field-house/bin/cambiar_fondo.sh` (o esperá el próximo disparo del timer).
+
+**El log dice `ERROR: CIUDAD inválida` (o `HORA_INICIO_... inválida`):**
+El script valida la configuración antes de aplicar nada. Editá el valor indicado en `~/.config/field-house/config.conf` con el formato que pide el mensaje (ciudad sin espacios ni tildes; horas en `HH:MM` de 24 hs) y corré el script de nuevo.
+
+**El log dice `ERROR: faltan comandos requeridos`:**
+Hace falta un binario del sistema. El mensaje lista cuáles. `curl` (u otro desde la lista) se instala con `sudo apt install <paquete>`.
+
+**El log dice `AVISO: no se encontró ninguna propiedad 'last-image'`:**
+El script no ve propiedades de fondo en xfconf. Esto pasa si la sesión gráfica no está lista (¿se corrió a mano sin una sesión XFCE abierta?), o con un perfil de XFCE recién creado. Corré `xfconf-query -c xfce4-desktop -l` para ver si existen; si no, creá un fondo desde el menú de XFCE una vez.
+
+**El log dice que fallaron propiedad(es) `last-image` al aplicar:**
+El script intentó aplicar el fondo pero una o más propiedades rechazaron el valor (suele ser un permiso de sesión o DISPLAY). Revisá la lista de propiedades que aparece en el mensaje y verificá que la sesión gráfica esté activa.
+
+**Quiero ver qué fondo se va a aplicar sin esperar a la próxima hora ni ensuciar el log:**
+`~/.local/share/field-house/bin/cambiar_fondo.sh --dry-run`. Imprime la franja, el clima y el fondo elegido sin tocar nada.
+
+**El log crece mucho (o quiero limitar su tamaño):**
+Cada ejecución agrega una línea, así que es difícil que sea un problema, pero si querés limitarlo editá `MAX_LOG_BYTES` en `config.conf` (bytes; al superarlo el log rota a `log.txt.1`).
 
 **Al prender la compu no hay internet todavía y el fondo arranca sin clima:**
 Es normal: la red puede tardar en levantarse. En la ejecución de login el script aplica el fondo base y reintenta el clima cada `ESPERA_REINTENTO_CLIMA` segundos (60s) hasta `REINTENTOS_CLIMA_INICIAL` veces (3). Si con eso no alcanza (tu WiFi tarda más de ~3 minutos o no hay red), el fondo se corrige solo en el próximo disparo horario. Podés subir ambos valores en `config.conf` si tu conexión es especialmente lenta.

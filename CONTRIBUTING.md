@@ -16,12 +16,14 @@ Abrí un [issue](../../issues) con:
 1. Forkeá el repositorio y creá una rama descriptiva (`fix-transicion-multimonitor`, `agregar-flag-verbose`, etc.)
 2. Si tocás `bin/cambiar_fondo.sh`, `install.sh` o `uninstall.sh`:
    - Corré `shellcheck` sobre el archivo antes de abrir el PR (`shellcheck bin/cambiar_fondo.sh`). El CI del repo lo corre automáticamente en cada push, pero adelantarlo evita idas y vueltas.
-   - Probá el script a mano en una sesión XFCE real si el cambio toca `xfconf-query` o la lógica de franjas/clima — no hay tests automatizados para el comportamiento en vivo.
+   - Corré `bash -n <archivo>` para validar sintaxis (también lo hace el CI).
+   - Probá la lógica de franjas/clima sin una sesión XFCE con `bin/cambiar_fondo.sh --dry-run` (validar configuración es parte de eso). Si el cambio toca `xfconf-query` real, probalo también en una sesión XFCE — no hay tests automatizados para el comportamiento en vivo.
    - Mantené los comentarios y docstrings de las funciones existentes como referencia de estilo.
 3. Si agregás una opción de configuración nueva, actualizá:
    - El bloque `: "${VARIABLE:=valor_default}"` en `bin/cambiar_fondo.sh` (para no romper instalaciones existentes con un `config.conf` viejo)
    - La plantilla que genera `install.sh`
    - `INSTALACION.md` **e** `INSTALLATION.en.md`, sección correspondiente en ambos
+   - Si además es algo visible para el usuario, una entrada en `CHANGELOG.md`
 4. Abrí el pull request contra `main` con una descripción de qué cambia y por qué.
 
 ## Agregar tus propias imágenes al proyecto (no solo localmente)

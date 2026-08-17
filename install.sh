@@ -13,6 +13,8 @@
 
 set -Eeuo pipefail
 
+VERSION="1.1.0"
+
 # ----------------------------------------------------------------------------
 # Colores (mismo estilo que setup.sh, para consistencia visual)
 # ----------------------------------------------------------------------------
@@ -67,7 +69,7 @@ ORIGEN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo
 echo "====================================================================="
-echo "       THE FIELD HOUSE — LIVE WALLPAPER — INSTALADOR"
+echo "       THE FIELD HOUSE — LIVE WALLPAPER — INSTALADOR  (v$VERSION)"
 echo "====================================================================="
 echo
 echo "Este programa cambia el fondo de pantalla de XFCE automáticamente"
@@ -78,10 +80,43 @@ echo "  Programa e imágenes : $DATOS_APP"
 echo "  Configuración        : $CONFIG_DIR"
 echo "  Logs                 : $STATE_DIR"
 echo
+# ----------------------------------------------------------------------------
+# Detección de instalación previa
+# ----------------------------------------------------------------------------
+# Reinstalar es equivalente a una instalación de fábrica: si ya existe una
+# instalación anterior (directorios o unidades de systemd), se borra por
+# completo antes de copiar la nueva, para que no quede NADA de la versión
+# vieja. El prompt "¿Continuar?" de abajo sirve de confirmación.
+
+HAY_INSTALACION_PREVIA="no"
+if [ -d "$DATOS_APP" ] || [ -d "$CONFIG_DIR" ] || [ -d "$STATE_DIR" ] \
+    || compgen -G "$SYSTEMD_USER_DIR/field-house*.service" >/dev/null \
+    || compgen -G "$SYSTEMD_USER_DIR/field-house*.timer" >/dev/null; then
+    HAY_INSTALACION_PREVIA="si"
+fi
+
+if [ "$HAY_INSTALACION_PREVIA" = "si" ]; then
+    warning "Se detectó una instalación previa de The Field House."
+    warning "Reinstalar deja todo de fábrica: se borran el programa, las imágenes"
+    warning "(incluidas las que hayas personalizado), la configuración y los logs."
+fi
+
 read -rp "¿Continuar? [S/n]: " CONFIRM_INSTALL
 if [[ ! "$CONFIRM_INSTALL" =~ ^([sS]|[yY]|)$ ]]; then
     echo "Instalación cancelada."
     exit 0
+fi
+
+if [ "$HAY_INSTALACION_PREVIA" = "si" ]; then
+    info "Eliminando la instalación previa..."
+    systemctl --user disable --now field-house.timer 2>/dev/null || true
+    systemctl --user disable --now field-house-login.service 2>/dev/null || true
+    # Se borran TODAS las unidades de campo field-house*, no solo las actuales:
+    # si una versión vieja dejó alguna con otro nombre, no debe sobrevivir.
+    rm -f "$SYSTEMD_USER_DIR"/field-house*.service "$SYSTEMD_USER_DIR"/field-house*.timer
+    systemctl --user daemon-reload
+    rm -rf "$DATOS_APP" "$CONFIG_DIR" "$STATE_DIR"
+    success "Instalación previa eliminada. Continuando con una instalación limpia."
 fi
 
 # ----------------------------------------------------------------------------
@@ -142,7 +177,39 @@ if [[ -z "$CIUDAD_DETECTADA" ]]; then
     done
 fi
 
+# Misma validación que aplica cambiar_fondo.sh en el arranque: si el nombre
+# tuviera caracteres que rompen la URL de wttr.in, nadie se enteraría hasta
+# ver un fondo raro. Mejor fallar acá, con el valor a la vista.
+if [[ ! "$CIUDAD_DETECTADA" =~ ^[A-Za-z0-9.,_-]+$ ]]; then
+    error "Ciudad inválida: '$CIUDAD_DETECTADA'. Solo letras y números (sin espacios ni tildes), opcionalmente . , _ o -. Ej: CanuelasAR, LondonGB."
+    exit 1
+fi
+
 success "Ciudad configurada: $CIUDAD_DETECTADA"
+
+# ----------------------------------------------------------------------------
+# Modo de horarios (fijo por defecto; auto según la salida/puesta del sol)
+# ----------------------------------------------------------------------------
+# "fijo" usa siempre los horarios de config.conf (comportamiento original).
+# "auto" calcula las franjas a partir de la salida y puesta real del sol de
+# la ciudad, con los horarios fijos como respaldo si la consulta falla.
+
+echo
+info "Modo de horarios..."
+echo "  - 'fijo':  horarios fijos (amanecer 06:00, mediodía 10:00, atardecer 15:00, noche 20:00),"
+echo "             siempre iguales, sin importar la estación del año."
+echo "  - 'auto':  franjas según la salida y puesta real del sol en tu ciudad (mediodía ="
+echo "             punto medio, noche = puesta + 2 hs). Requiere internet para calcularlas."
+MODO_HORARIOS=""
+read -rp "¿Cuál querés? [fijo/auto] (default: fijo): " MODO_HORARIOS
+if [[ -z "$MODO_HORARIOS" ]]; then
+    MODO_HORARIOS="fijo"
+fi
+if [[ "$MODO_HORARIOS" != "fijo" && "$MODO_HORARIOS" != "auto" ]]; then
+    error "Modo inválido: '$MODO_HORARIOS'. Debe ser 'fijo' o 'auto'."
+    exit 1
+fi
+success "Horarios: $MODO_HORARIOS"
 
 # ----------------------------------------------------------------------------
 # 2) Copiar programa e imágenes
@@ -158,6 +225,15 @@ chmod +x "$DATOS_APP/bin/cambiar_fondo.sh"
 
 cp "$ORIGEN"/fondos/*.jpg "$DATOS_APP/fondos/"
 
+# Verificación: si el cp falló parcialmente (por ejemplo un .jpg ilegible), el
+# script de fondo se quejaría de imágenes faltantes recién al correr. Mejor
+# avisarlo acá, mientras la instalación está fresca.
+FONDOS_COPIADOS=$(find "$DATOS_APP/fondos" -maxdepth 1 -name '*.jpg' 2>/dev/null | wc -l || true)
+if [ "$FONDOS_COPIADOS" -ne 9 ]; then
+    error "La copia de imágenes no quedó completa: se encontraron $FONDOS_COPIADOS de 9 archivos .jpg. Revisá la carpeta 'fondos/' del repositorio."
+    exit 1
+fi
+
 success "Programa instalado en $DATOS_APP"
 
 # ----------------------------------------------------------------------------
@@ -167,10 +243,8 @@ success "Programa instalado en $DATOS_APP"
 echo
 info "3/4 - Generando configuración..."
 
-if [[ -f "$CONFIG_FILE" ]]; then
-    warning "Ya existía una configuración previa en $CONFIG_FILE, se guarda una copia como config.conf.bak"
-    cp "$CONFIG_FILE" "$CONFIG_FILE.bak"
-fi
+# No hay backup de la configuración anterior: la instalación es de fábrica.
+# (La limpieza del paso 0 ya borró lo viejo; la reinstalación no conserva nada.)
 
 cat << EOF > "$CONFIG_FILE"
 # Configuración de The Field House.
@@ -183,7 +257,13 @@ CARPETA_FONDOS="$DATOS_APP/fondos"
 # Ciudad para consultar el clima en wttr.in (sin espacios ni tildes).
 CIUDAD="$CIUDAD_DETECTADA"
 
-# Franjas horarias fijas (formato HH:MM, 24hs).
+# Modo de horarios: "fijo" (usa los HORA_INICIO_* de acá abajo, siempre los
+# mismos) o "auto" (calcula amanecer/mediodía/atardecer/noche según la salida
+# y puesta real del sol; si la consulta falla, usa los fijos de acá abajo).
+MODO_HORARIOS="$MODO_HORARIOS"
+
+# Franjas horarias fijas (formato HH:MM, 24hs). Son las que se usan tal cual
+# en modo fijo, y el respaldo en modo auto cuando no se puede consultar el sol.
 HORA_INICIO_AMANECER="06:00"
 HORA_INICIO_MEDIODIA="10:00"
 HORA_INICIO_ATARDECER="15:00"
@@ -203,6 +283,14 @@ ESPERA_INICIAL_SEGUNDOS=15
 # ESPERA_REINTENTO_CLIMA segundos, hasta REINTENTOS_CLIMA_INICIAL veces.
 REINTENTOS_CLIMA_INICIAL=3
 ESPERA_REINTENTO_CLIMA=60
+
+# Caché del clima: durante cuántos segundos se reutiliza la última consulta
+# a wttr.in antes de volver a consultar (evita llamadas redundantes cuando
+# el timer horario y el login disparan casi en el mismo momento).
+TTL_CACHE_CLIMA=600
+
+# Tamaño máximo del log en bytes antes de rotarlo a log.txt.1 (1 MiB).
+MAX_LOG_BYTES=1048576
 EOF
 
 success "Configuración guardada en $CONFIG_FILE"
@@ -226,6 +314,10 @@ cp "$ORIGEN/systemd/field-house.timer" "$SYSTEMD_USER_DIR/"
 cp "$ORIGEN/systemd/field-house-login.service" "$SYSTEMD_USER_DIR/"
 
 systemctl --user daemon-reload
+
+# Limpiar unidades que hayan quedado en estado "failed" de corridas previas,
+# para que el estado refleje solo la instalación nueva.
+systemctl --user reset-failed field-house.service field-house.timer field-house-login.service 2>/dev/null || true
 
 # Timer que corre cada hora.
 systemctl --user enable --now field-house.timer
@@ -257,6 +349,7 @@ echo "  ✓ Programa      : $DATOS_APP"
 echo "  ✓ Configuración : $CONFIG_FILE"
 echo "  ✓ Logs          : $STATE_DIR/log.txt"
 echo "  ✓ Ciudad        : $CIUDAD_DETECTADA"
+echo "  ✓ Horarios      : $MODO_HORARIOS"
 echo
 echo "El fondo se va a actualizar solo cada hora, y también al iniciar sesión."
 echo
@@ -267,6 +360,12 @@ echo "    systemctl --user status field-house.timer"
 echo
 echo "  Ejecutar manualmente ahora:"
 echo "    $DATOS_APP/bin/cambiar_fondo.sh"
+echo
+echo "  Simular sin tocar nada (qué fondo se aplicaría):"
+echo "    $DATOS_APP/bin/cambiar_fondo.sh --dry-run"
+echo
+echo "  Ver la ayuda completa:"
+echo "    $DATOS_APP/bin/cambiar_fondo.sh --help"
 echo
 echo "  Ver el log:"
 echo "    tail -f $STATE_DIR/log.txt"

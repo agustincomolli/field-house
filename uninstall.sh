@@ -10,6 +10,8 @@
 
 set -Eeuo pipefail
 
+VERSION="1.1.0"
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -26,7 +28,7 @@ SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 
 echo
 echo "====================================================================="
-echo "       THE FIELD HOUSE — DESINSTALADOR"
+echo "       THE FIELD HOUSE — DESINSTALADOR  (v$VERSION)"
 echo "====================================================================="
 echo
 read -rp "¿Confirmás que querés desinstalar The Field House? [s/N]: " CONFIRM
