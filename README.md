@@ -21,7 +21,7 @@ Cambia automáticamente el fondo de pantalla de **XFCE** (Linux Mint XFCE, Xubun
 Requisitos: Linux Mint XFCE (o cualquier distro con XFCE) con `systemd`, `curl`, y `xfconf-query` (viene con XFCE).
 
 ```bash
-git clone https://github.com/TU_USUARIO/field-house.git
+git clone https://github.com/agustincomolli/field-house.git
 cd field-house
 chmod +x ./install.sh
 ./install.sh

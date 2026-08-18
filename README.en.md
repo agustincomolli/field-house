@@ -21,7 +21,7 @@ Automatically changes your **XFCE** desktop wallpaper (Linux Mint XFCE, Xubuntu,
 Requirements: Linux Mint XFCE (or any XFCE-based distro) with `systemd`, `curl`, and `xfconf-query` (bundled with XFCE).
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/field-house.git
+git clone https://github.com/agustincomolli/field-house.git
 cd field-house
 ./install.sh
 ```
