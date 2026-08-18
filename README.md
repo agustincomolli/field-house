@@ -34,7 +34,7 @@ El instalador va a:
 4. Generar tu configuración en `~/.config/field-house/config.conf`.
 5. Habilitar los timers de `systemd` para que el fondo se actualice solo.
 
-> ⚠️ **Reinstalar = instalar de fábrica.** Si ya tenés una instalación previa, `install.sh` la detecta y la borra por completo antes de copiar la nueva: programa, imágenes (incluidas las que hayas personalizado), configuración y logs anteriores. Nada de la instalación vieja se conserva.
+> ℹ️ **Reinstalar resguarda lo anterior por defecto.** Si ya tenés una instalación previa, `install.sh` la detecta y, tras confirmar, mueve el programa, las imágenes (incluidas las personalizadas), la configuración y los logs a una copia `.bak.FECHAHORA` antes de instalar la versión nueva. Usá `./install.sh --no-backup` si preferís borrarla directamente sin resguardo. Más detalle en [INSTALACION.md](INSTALACION.md#reinstalar--actualizar).
 
 ImageMagick es opcional, solo hace falta si querés la transición de fundido entre fondos:
 
@@ -51,16 +51,16 @@ Una vez instalado, no hay que hacer nada más — el fondo se actualiza solo cad
 systemctl --user status field-house.timer
 
 # Forzar una actualización ahora mismo
-~/.local/share/field-house/bin/cambiar_fondo.sh
+~/.local/share/field-house/bin/change_wallpaper.sh
 
 # Simular sin tocar nada (qué fondo se aplicaría ahora)
-~/.local/share/field-house/bin/cambiar_fondo.sh --dry-run
+~/.local/share/field-house/bin/change_wallpaper.sh --dry-run
 
 # Ver la ayuda completa (opciones, rutas)
-~/.local/share/field-house/bin/cambiar_fondo.sh --help
+~/.local/share/field-house/bin/change_wallpaper.sh --help
 
 # Ver la versión
-~/.local/share/field-house/bin/cambiar_fondo.sh --version
+~/.local/share/field-house/bin/change_wallpaper.sh --version
 
 # Ver el log
 tail -f ~/.local/state/field-house/log.txt

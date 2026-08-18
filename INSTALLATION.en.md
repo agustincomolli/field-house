@@ -9,7 +9,7 @@ This document explains in detail how each part of the program works, and how to 
 ```
 field-house/
 ├── bin/
-│   └── cambiar_fondo.sh              # The script that does the work
+│   └── change_wallpaper.sh              # The script that does the work
 ├── fondos/                           # The 9 wallpaper images
 ├── systemd/
 │   ├── field-house.service           # Service that runs the script
@@ -48,8 +48,8 @@ If you'd rather not run the installer, you can set everything up by hand:
 # 1. Program and images
 mkdir -p ~/.local/share/field-house/bin
 mkdir -p ~/.local/share/field-house/fondos
-cp bin/cambiar_fondo.sh ~/.local/share/field-house/bin/
-chmod +x ~/.local/share/field-house/bin/cambiar_fondo.sh
+cp bin/change_wallpaper.sh ~/.local/share/field-house/bin/
+chmod +x ~/.local/share/field-house/bin/change_wallpaper.sh
 cp fondos/*.jpg ~/.local/share/field-house/fondos/
 
 # 2. Configuration
@@ -81,15 +81,23 @@ systemctl --user enable field-house-login.service
 
 Replace `CIUDAD="CanuelasAR"` with your own city (no spaces or accents; you can test what wttr.in recognizes with `curl "https://wttr.in/YourCity?format=%C"`). Note that missing values in an older `config.conf` fall back to the script's defaults, so adding new variables doesn't break existing installs.
 
-## Reinstalling / updating (factory install)
+## Reinstalling / updating
 
-To update to a new version, just run `./install.sh` again on the cloned repo. The installer **detects whether a previous install exists** (program, configuration, logs, or systemd units) and, after the confirmation prompt, **wipes everything previous before copying the new one**:
+To update to a new version, just run `./install.sh` again on the cloned repo. The installer **detects whether a previous install exists** (program, configuration, logs, or systemd units) and, after the confirmation prompt, reinstalls in one of two ways:
 
-- Program and images in `~/.local/share/field-house` (including any images you customized)
-- Configuration and logs (`~/.config/field-house` and `~/.local/state/field-house`)
-- All The Field House systemd units, including any leftovers from older versions
+- **By default: with backup.** The program, images (including any you customized), configuration, and current logs get **moved** (`mv`) to a copy with a `.bak.TIMESTAMP` suffix in the same location, before installing the new version. Nothing is deleted irreversibly — the installer's final summary shows the exact path of each backup, so you can recover what you need by hand, or delete the backup yourself once you no longer need it.
+- **With `./install.sh --no-backup`: no backup.** Deletes the previous install directly (program, customized images included, configuration, and logs) without keeping a copy. Use this if you're iterating fast during development and don't want backups piling up, or if you already backed up what mattered to you yourself.
 
-No backup is kept (no more `config.conf.bak`): reinstalling leaves your machine exactly as freshly installed. If you want to keep something specific (for example, your city), write it down first or save it elsewhere. If you'd rather uninstall while keeping data, use `uninstall.sh`, which asks whether you want to keep configuration and logs.
+In both cases, previous systemd units are always deleted (never backed up) — they're one-line pointers to fixed paths, not user data, and they get regenerated on the new install.
+
+If you'd rather uninstall entirely (without reinstalling), use `uninstall.sh`, which also asks whether you want to keep configuration and logs.
+
+Other `install.sh` flags:
+
+```bash
+./install.sh --help       # help
+./install.sh --version    # installer version
+```
 
 > Note: the config keys themselves (`CARPETA_FONDOS`, `CIUDAD`, `HORA_INICIO_AMANECER`, etc.) stay in Spanish, since they're read directly by the script. Only the documentation is translated.
 
@@ -186,7 +194,7 @@ The design goal is to **degrade gracefully but fail clearly**: the script surviv
 - **Safe, self-cleaning temp files.** The transition frames go to a `mktemp` directory (private permissions), and a `trap` removes it on exit — normal or interrupted. Old versions could leave orphan directories in `/tmp` if the script died halfway; that no longer happens.
 - **No silent xfconf failures.** If any `last-image` property fails to be set, failures are accumulated and logged (with the affected property names). If there are no `last-image` properties at all (fresh XFCE profile), it's reported explicitly.
 - **Rotated log.** Each line is a single run (24/day), so it grows slowly, but the log is still rotated to `log.txt.1` once it exceeds `MAX_LOG_BYTES` (1 MiB by default), keeping only the most recent copy.
-- **`--dry-run` for diagnostics.** `cambiar_fondo.sh --dry-run` (optionally with `--reboot`) prints the time slot, weather, and wallpaper that would be applied **without** touching xfconf, without writing logs or state, and without waits or the lock. It's useful for testing the time/weather logic on any machine, and it's the first thing we ask for in a bug report.
+- **`--dry-run` for diagnostics.** `change_wallpaper.sh --dry-run` (optionally with `--reboot`) prints the time slot, weather, and wallpaper that would be applied **without** touching xfconf, without writing logs or state, and without waits or the lock. It's useful for testing the time/weather logic on any machine, and it's the first thing we ask for in a bug report.
 
 ## Troubleshooting
 
@@ -197,13 +205,13 @@ Confirm the user session bus is active: `systemctl --user status` with no argume
 systemd user services should inherit `DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` from the graphical session, but just in case, the script and the `.service` files set them explicitly. If your session isn't `:0`, adjust the `Environment=DISPLAY=:0` line in the `.service` files (in `~/.config/systemd/user/`) and run `systemctl --user daemon-reload`.
 
 **Weather isn't detected correctly:**
-Try `curl "https://wttr.in/YourCity?format=%C"` directly in the terminal to see the exact text it returns, and adjust the keyword lists in `bin/cambiar_fondo.sh` (overcast: `overcast|cloudy`; rain: `rain|drizzle|shower|thunder|mist|fog`) if your weather returns a different word. Remember the result is cached for 10 minutes (`TTL_CACHE_CLIMA`); if you change your city or want to verify a change, delete `~/.local/state/field-house/clima.cache` and run the script again.
+Try `curl "https://wttr.in/YourCity?format=%C"` directly in the terminal to see the exact text it returns, and adjust the keyword lists in `bin/change_wallpaper.sh` (overcast: `overcast|cloudy`; rain: `rain|drizzle|shower|thunder|mist|fog`) if your weather returns a different word. Remember the result is cached for 10 minutes (`TTL_CACHE_CLIMA`); if you change your city or want to verify a change, delete `~/.local/state/field-house/clima.cache` and run the script again.
 
 **The log says `AVISO: no se pudo obtener la salida/puesta del sol`:**
 Happens with `MODO_HORARIOS="auto"` when the wttr.in query (`j1` format) fails or your city doesn't resolve. Not serious: the script uses the fixed times from `config.conf` for that run and tries again next time. Check your internet or try `curl "https://wttr.in/YourCity?format=j1"`.
 
 **I want to switch from fixed hours to automatic (or back):**
-Edit `MODO_HORARIOS` in `~/.config/field-house/config.conf` (`"fijo"` or `"auto"`) and run `~/.local/share/field-house/bin/cambiar_fondo.sh` (or wait for the next timer trigger).
+Edit `MODO_HORARIOS` in `~/.config/field-house/config.conf` (`"fijo"` or `"auto"`) and run `~/.local/share/field-house/bin/change_wallpaper.sh` (or wait for the next timer trigger).
 
 **The log says `ERROR: CIUDAD inválida` (or `HORA_INICIO_... inválida`):**
 The script validates the configuration before applying anything. Edit the value named in the message in `~/.config/field-house/config.conf` with the required format (city with no spaces or accents; times as `HH:MM` in 24-hour format) and run the script again.
@@ -218,7 +226,7 @@ The script can't see any wallpaper properties in xfconf. This happens when the g
 The script tried to apply the wallpaper but one or more properties rejected the value (usually a session/permission issue or DISPLAY). Check the property list in the message and make sure the graphical session is active.
 
 **I want to see which wallpaper would be applied without waiting for the next hour or dirtying the log:**
-`~/.local/share/field-house/bin/cambiar_fondo.sh --dry-run`. It prints the time slot, weather, and chosen wallpaper without touching anything.
+`~/.local/share/field-house/bin/change_wallpaper.sh --dry-run`. It prints the time slot, weather, and chosen wallpaper without touching anything.
 
 **The log grows too much (or I want to cap its size):**
 Each run adds one line, so it's hard for this to be a problem, but if you want to cap it, edit `MAX_LOG_BYTES` in `config.conf` (in bytes; once exceeded, the log rotates to `log.txt.1`).

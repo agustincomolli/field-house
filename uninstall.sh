@@ -10,7 +10,7 @@
 
 set -Eeuo pipefail
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'

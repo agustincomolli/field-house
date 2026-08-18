@@ -8,12 +8,20 @@
 # ciudad, y deja los timers de systemd habilitados y corriendo.
 #
 # Uso:
-#   ./install.sh
+#   ./install.sh                instalación normal (resguarda una instalación
+#                                 previa si existe, ver --no-backup)
+#   ./install.sh --no-backup    si hay una instalación previa, la borra
+#                                 directamente en vez de resguardarla con
+#                                 mv a *.bak.FECHAHORA. Perdés cualquier
+#                                 imagen o configuración personalizada que
+#                                 no hayas resguardado vos mismo antes.
+#   ./install.sh --help         muestra esta ayuda
+#   ./install.sh --version      muestra la versión del instalador
 # ============================================================================
 
 set -Eeuo pipefail
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 # ----------------------------------------------------------------------------
 # Colores (mismo estilo que setup.sh, para consistencia visual)
@@ -28,6 +36,46 @@ info()    { echo -e "${BLUE}==>${NC} $1"; }
 success() { echo -e "${GREEN}✓${NC} $1"; }
 warning() { echo -e "${YELLOW}!${NC} $1"; }
 error()   { echo -e "${RED}✗${NC} $1"; }
+
+# ----------------------------------------------------------------------------
+# Parseo de argumentos
+# ----------------------------------------------------------------------------
+
+SIN_BACKUP="no"
+
+for arg in "$@"; do
+    case "$arg" in
+        --no-backup)
+            SIN_BACKUP="si"
+            ;;
+        --help|-h)
+            echo "The Field House — Live Wallpaper v$VERSION — instalador"
+            echo
+            echo "Uso:"
+            echo "  ./install.sh                Instalación normal. Si hay una instalación"
+            echo "                                previa, la resguarda con mv a *.bak.FECHAHORA"
+            echo "                                antes de instalar la nueva."
+            echo "  ./install.sh --no-backup    Si hay una instalación previa, la borra"
+            echo "                                directamente en vez de resguardarla. Perdés"
+            echo "                                cualquier imagen o configuración personalizada"
+            echo "                                que no hayas resguardado vos mismo antes."
+            echo "  ./install.sh --help         Muestra esta ayuda."
+            echo "  ./install.sh --version      Muestra la versión del instalador."
+            exit 0
+            ;;
+        --version|-v)
+            echo "The Field House — Live Wallpaper v$VERSION — instalador"
+            exit 0
+            ;;
+        *)
+            error "Argumento desconocido: $arg"
+            echo "Probá: ./install.sh --help"
+            exit 1
+            ;;
+    esac
+done
+
+
 
 # ----------------------------------------------------------------------------
 # Comprobaciones previas
@@ -83,10 +131,11 @@ echo
 # ----------------------------------------------------------------------------
 # Detección de instalación previa
 # ----------------------------------------------------------------------------
-# Reinstalar es equivalente a una instalación de fábrica: si ya existe una
-# instalación anterior (directorios o unidades de systemd), se borra por
-# completo antes de copiar la nueva, para que no quede NADA de la versión
-# vieja. El prompt "¿Continuar?" de abajo sirve de confirmación.
+# Reinstalar NO borra sin resguardo: si ya existe una instalación anterior
+# (directorios o unidades de systemd), se la MUEVE a *.bak.FECHAHORA en la
+# misma ubicación antes de instalar la nueva. Así, si el usuario tenía
+# imágenes personalizadas en fondos/, quedan recuperables incluso si
+# confirmó la reinstalación sin darse cuenta de que eso las iba a reemplazar.
 
 HAY_INSTALACION_PREVIA="no"
 if [ -d "$DATOS_APP" ] || [ -d "$CONFIG_DIR" ] || [ -d "$STATE_DIR" ] \
@@ -96,27 +145,64 @@ if [ -d "$DATOS_APP" ] || [ -d "$CONFIG_DIR" ] || [ -d "$STATE_DIR" ] \
 fi
 
 if [ "$HAY_INSTALACION_PREVIA" = "si" ]; then
+    echo
     warning "Se detectó una instalación previa de The Field House."
-    warning "Reinstalar deja todo de fábrica: se borran el programa, las imágenes"
-    warning "(incluidas las que hayas personalizado), la configuración y los logs."
-fi
-
-read -rp "¿Continuar? [S/n]: " CONFIRM_INSTALL
-if [[ ! "$CONFIRM_INSTALL" =~ ^([sS]|[yY]|)$ ]]; then
-    echo "Instalación cancelada."
-    exit 0
+    if [ "$SIN_BACKUP" = "si" ]; then
+        echo "  Corriste el instalador con --no-backup: el programa, las imágenes"
+        echo "  (incluidas las que hayas personalizado), la configuración y los"
+        echo "  logs actuales se van a BORRAR de forma DEFINITIVA antes de instalar"
+        echo "  la versión nueva. No hay forma de recuperarlos después de esto."
+        echo
+        read -rp "¿Reinstalar borrando la instalación anterior sin resguardo? [s/N]: " CONFIRM_REINSTALL
+    else
+        echo "  Antes de instalar la versión nueva, el programa, las imágenes"
+        echo "  (incluidas las que hayas personalizado), la configuración y los"
+        echo "  logs actuales se van a MOVER a una copia de resguardo con sufijo"
+        echo "  '.bak.FECHAHORA' en el mismo lugar donde están ahora. No se borra"
+        echo "  nada de forma irreversible; podés recuperarlos a mano después, o"
+        echo "  borrar la copia vos mismo cuando ya no la necesites. (Usá"
+        echo "  --no-backup si preferís borrar directamente sin resguardo.)"
+        echo
+        read -rp "¿Reinstalar? Se resguardará la instalación anterior. [s/N]: " CONFIRM_REINSTALL
+    fi
+    if [[ ! "$CONFIRM_REINSTALL" =~ ^([sS]|[yY])$ ]]; then
+        echo "Instalación cancelada."
+        exit 0
+    fi
+else
+    read -rp "¿Continuar? [S/n]: " CONFIRM_INSTALL
+    if [[ ! "$CONFIRM_INSTALL" =~ ^([sS]|[yY]|)$ ]]; then
+        echo "Instalación cancelada."
+        exit 0
+    fi
 fi
 
 if [ "$HAY_INSTALACION_PREVIA" = "si" ]; then
-    info "Eliminando la instalación previa..."
     systemctl --user disable --now field-house.timer 2>/dev/null || true
     systemctl --user disable --now field-house-login.service 2>/dev/null || true
-    # Se borran TODAS las unidades de campo field-house*, no solo las actuales:
-    # si una versión vieja dejó alguna con otro nombre, no debe sobrevivir.
+    # Se borran (no se resguardan) las unidades de systemd: son punteros de
+    # una línea a rutas fijas, no datos del usuario; se regeneran solas al
+    # instalar. Se incluye el patrón field-house* completo, no solo las
+    # actuales, por si una versión vieja dejó alguna con otro nombre.
     rm -f "$SYSTEMD_USER_DIR"/field-house*.service "$SYSTEMD_USER_DIR"/field-house*.timer
     systemctl --user daemon-reload
-    rm -rf "$DATOS_APP" "$CONFIG_DIR" "$STATE_DIR"
-    success "Instalación previa eliminada. Continuando con una instalación limpia."
+
+    if [ "$SIN_BACKUP" = "si" ]; then
+        info "Eliminando la instalación previa (sin resguardo)..."
+        rm -rf "$DATOS_APP" "$CONFIG_DIR" "$STATE_DIR"
+        success "Instalación previa eliminada. Continuando con una instalación limpia."
+    else
+        info "Resguardando la instalación previa..."
+        SUFIJO_BAK=".bak.$(date +%Y%m%d%H%M%S)"
+
+        for dir in "$DATOS_APP" "$CONFIG_DIR" "$STATE_DIR"; do
+            if [ -d "$dir" ]; then
+                mv "$dir" "${dir}${SUFIJO_BAK}"
+            fi
+        done
+
+        success "Instalación previa resguardada con el sufijo '$SUFIJO_BAK' junto a cada carpeta original."
+    fi
 fi
 
 # ----------------------------------------------------------------------------
@@ -177,7 +263,7 @@ if [[ -z "$CIUDAD_DETECTADA" ]]; then
     done
 fi
 
-# Misma validación que aplica cambiar_fondo.sh en el arranque: si el nombre
+# Misma validación que aplica change_wallpaper.sh en el arranque: si el nombre
 # tuviera caracteres que rompen la URL de wttr.in, nadie se enteraría hasta
 # ver un fondo raro. Mejor fallar acá, con el valor a la vista.
 if [[ ! "$CIUDAD_DETECTADA" =~ ^[A-Za-z0-9.,_-]+$ ]]; then
@@ -220,8 +306,8 @@ info "2/4 - Instalando archivos..."
 
 mkdir -p "$DATOS_APP/bin" "$DATOS_APP/fondos" "$CONFIG_DIR" "$STATE_DIR" "$SYSTEMD_USER_DIR"
 
-cp "$ORIGEN/bin/cambiar_fondo.sh" "$DATOS_APP/bin/cambiar_fondo.sh"
-chmod +x "$DATOS_APP/bin/cambiar_fondo.sh"
+cp "$ORIGEN/bin/change_wallpaper.sh" "$DATOS_APP/bin/change_wallpaper.sh"
+chmod +x "$DATOS_APP/bin/change_wallpaper.sh"
 
 cp "$ORIGEN"/fondos/*.jpg "$DATOS_APP/fondos/"
 
@@ -330,7 +416,7 @@ success "Servicios de systemd instalados y habilitados."
 # Primera ejecución inmediata, para que el fondo quede aplicado ya mismo
 # en vez de esperar a la próxima hora en punto.
 info "Aplicando el primer fondo..."
-if "$DATOS_APP/bin/cambiar_fondo.sh"; then
+if "$DATOS_APP/bin/change_wallpaper.sh"; then
     success "Fondo aplicado correctamente."
 else
     warning "La primera ejecución falló. Revisá el log en $STATE_DIR/log.txt"
@@ -351,6 +437,18 @@ echo "  ✓ Logs          : $STATE_DIR/log.txt"
 echo "  ✓ Ciudad        : $CIUDAD_DETECTADA"
 echo "  ✓ Horarios      : $MODO_HORARIOS"
 echo
+if [ "$HAY_INSTALACION_PREVIA" = "si" ]; then
+    if [ "$SIN_BACKUP" = "si" ]; then
+        echo "  ℹ Se eliminó la instalación anterior sin resguardo (--no-backup)."
+    else
+        echo "  ℹ Instalación anterior resguardada con el sufijo '$SUFIJO_BAK'"
+        echo "    junto a cada carpeta original (por ejemplo:"
+        echo "    ${DATOS_APP}${SUFIJO_BAK}). Podés recuperar de ahí tus imágenes"
+        echo "    personalizadas si las tenías, o borrar esas copias cuando ya no"
+        echo "    las necesites."
+    fi
+    echo
+fi
 echo "El fondo se va a actualizar solo cada hora, y también al iniciar sesión."
 echo
 echo "Comandos útiles:"
@@ -359,13 +457,13 @@ echo "  Ver estado del timer:"
 echo "    systemctl --user status field-house.timer"
 echo
 echo "  Ejecutar manualmente ahora:"
-echo "    $DATOS_APP/bin/cambiar_fondo.sh"
+echo "    $DATOS_APP/bin/change_wallpaper.sh"
 echo
 echo "  Simular sin tocar nada (qué fondo se aplicaría):"
-echo "    $DATOS_APP/bin/cambiar_fondo.sh --dry-run"
+echo "    $DATOS_APP/bin/change_wallpaper.sh --dry-run"
 echo
 echo "  Ver la ayuda completa:"
-echo "    $DATOS_APP/bin/cambiar_fondo.sh --help"
+echo "    $DATOS_APP/bin/change_wallpaper.sh --help"
 echo
 echo "  Ver el log:"
 echo "    tail -f $STATE_DIR/log.txt"

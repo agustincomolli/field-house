@@ -14,13 +14,13 @@ Abrí un [issue](../../issues) con:
 ## Proponer un cambio
 
 1. Forkeá el repositorio y creá una rama descriptiva (`fix-transicion-multimonitor`, `agregar-flag-verbose`, etc.)
-2. Si tocás `bin/cambiar_fondo.sh`, `install.sh` o `uninstall.sh`:
-   - Corré `shellcheck` sobre el archivo antes de abrir el PR (`shellcheck bin/cambiar_fondo.sh`). El CI del repo lo corre automáticamente en cada push, pero adelantarlo evita idas y vueltas.
+2. Si tocás `bin/change_wallpaper.sh`, `install.sh` o `uninstall.sh`:
+   - Corré `shellcheck` sobre el archivo antes de abrir el PR (`shellcheck bin/change_wallpaper.sh`). El CI del repo lo corre automáticamente en cada push, pero adelantarlo evita idas y vueltas.
    - Corré `bash -n <archivo>` para validar sintaxis (también lo hace el CI).
-   - Probá la lógica de franjas/clima sin una sesión XFCE con `bin/cambiar_fondo.sh --dry-run` (validar configuración es parte de eso). Si el cambio toca `xfconf-query` real, probalo también en una sesión XFCE — no hay tests automatizados para el comportamiento en vivo.
+   - Probá la lógica de franjas/clima sin una sesión XFCE con `bin/change_wallpaper.sh --dry-run` (validar configuración es parte de eso). Si el cambio toca `xfconf-query` real, probalo también en una sesión XFCE — no hay tests automatizados para el comportamiento en vivo.
    - Mantené los comentarios y docstrings de las funciones existentes como referencia de estilo.
 3. Si agregás una opción de configuración nueva, actualizá:
-   - El bloque `: "${VARIABLE:=valor_default}"` en `bin/cambiar_fondo.sh` (para no romper instalaciones existentes con un `config.conf` viejo)
+   - El bloque `: "${VARIABLE:=valor_default}"` en `bin/change_wallpaper.sh` (para no romper instalaciones existentes con un `config.conf` viejo)
    - La plantilla que genera `install.sh`
    - `INSTALACION.md` **e** `INSTALLATION.en.md`, sección correspondiente en ambos
    - Si además es algo visible para el usuario, una entrada en `CHANGELOG.md`

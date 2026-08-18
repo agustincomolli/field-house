@@ -13,11 +13,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck bin/cambiar_fondo.sh install.sh uninstall.sh
+          shellcheck bin/change_wallpaper.sh install.sh uninstall.sh
       - name: Sintaxis (bash -n)
         run: |
-          bash -n bin/cambiar_fondo.sh install.sh uninstall.sh
-      - name: Smoke test (--dry-run)
+          bash -n bin/change_wallpaper.sh install.sh uninstall.sh
+      - name: Smoke test — modo fijo (config mínima, valores por defecto)
         run: |
           mkdir -p "$HOME/.config/field-house"
           cat > "$HOME/.config/field-house/config.conf" <<EOF
@@ -33,5 +33,85 @@ jobs:
           REINTENTOS_CLIMA_INICIAL=3
           ESPERA_REINTENTO_CLIMA=60
           EOF
-          bash bin/cambiar_fondo.sh --dry-run
-          bash bin/cambiar_fondo.sh --version
+          bash bin/change_wallpaper.sh --dry-run
+          bash bin/change_wallpaper.sh --version
+      - name: Smoke test — modo auto (salida/puesta real del sol, contra wttr.in)
+        run: |
+          # A diferencia del test anterior, ejercita MODO_HORARIOS="auto" con
+          # conectividad real de los runners de GitHub Actions: cubre el
+          # camino feliz de consultar_horarios_sol() (parseo del JSON j1,
+          # conversión AM/PM, cálculo de mediodía/noche), que el smoke test
+          # de modo fijo no toca en absoluto.
+          mkdir -p "$HOME/.config/field-house"
+          cat > "$HOME/.config/field-house/config.conf" <<EOF
+          CARPETA_FONDOS="$GITHUB_WORKSPACE/fondos"
+          CIUDAD="CanuelasAR"
+          MODO_HORARIOS="auto"
+          HORA_INICIO_AMANECER="06:00"
+          HORA_INICIO_MEDIODIA="10:00"
+          HORA_INICIO_ATARDECER="15:00"
+          HORA_INICIO_NOCHE="20:00"
+          PASOS_TRANSICION=15
+          PAUSA_ENTRE_PASOS="0.15"
+          ESPERA_INICIAL_SEGUNDOS=0
+          REINTENTOS_CLIMA_INICIAL=3
+          ESPERA_REINTENTO_CLIMA=60
+          EOF
+          SALIDA=$(bash bin/change_wallpaper.sh --dry-run)
+          echo "$SALIDA"
+          # Si wttr.in no pudo resolver la ciudad ese día, el script degrada
+          # a horarios fijos y lo dice explícitamente; cualquier otro caso
+          # debe mostrar la línea "Horarios según el sol: ...".
+          if ! echo "$SALIDA" | grep -q "Horarios según el sol:" \
+              && ! echo "$SALIDA" | grep -q "no se pudo obtener la salida/puesta del sol"; then
+            echo "::error::modo auto no generó ninguno de los dos mensajes esperados (ni horarios del sol ni fallback documentado)"
+            exit 1
+          fi
+      - name: Smoke test — variables nuevas explícitas (MODO_HORARIOS, TTL_CACHE_CLIMA, MAX_LOG_BYTES)
+        run: |
+          # Cubre validar_configuracion() para las tres variables que el
+          # smoke test original omitía (quedaban solo cubiertas por sus
+          # valores por defecto, nunca por un valor explícito del usuario).
+          mkdir -p "$HOME/.config/field-house"
+          cat > "$HOME/.config/field-house/config.conf" <<EOF
+          CARPETA_FONDOS="$GITHUB_WORKSPACE/fondos"
+          CIUDAD="CanuelasAR"
+          MODO_HORARIOS="fijo"
+          HORA_INICIO_AMANECER="06:00"
+          HORA_INICIO_MEDIODIA="10:00"
+          HORA_INICIO_ATARDECER="15:00"
+          HORA_INICIO_NOCHE="20:00"
+          PASOS_TRANSICION=15
+          PAUSA_ENTRE_PASOS="0.15"
+          ESPERA_INICIAL_SEGUNDOS=0
+          REINTENTOS_CLIMA_INICIAL=3
+          ESPERA_REINTENTO_CLIMA=60
+          TTL_CACHE_CLIMA=600
+          MAX_LOG_BYTES=1048576
+          EOF
+          bash bin/change_wallpaper.sh --dry-run
+      - name: Smoke test — configuración inválida debe fallar (CIUDAD con espacio)
+        run: |
+          # Confirma que validar_configuracion() realmente detiene la
+          # ejecución (exit != 0) ante un valor inválido, en vez de
+          # continuar en silencio con un valor que rompería la consulta
+          # a wttr.in más adelante.
+          mkdir -p "$HOME/.config/field-house"
+          cat > "$HOME/.config/field-house/config.conf" <<EOF
+          CARPETA_FONDOS="$GITHUB_WORKSPACE/fondos"
+          CIUDAD="Buenos Aires"
+          HORA_INICIO_AMANECER="06:00"
+          HORA_INICIO_MEDIODIA="10:00"
+          HORA_INICIO_ATARDECER="15:00"
+          HORA_INICIO_NOCHE="20:00"
+          PASOS_TRANSICION=15
+          PAUSA_ENTRE_PASOS="0.15"
+          ESPERA_INICIAL_SEGUNDOS=0
+          REINTENTOS_CLIMA_INICIAL=3
+          ESPERA_REINTENTO_CLIMA=60
+          EOF
+          if bash bin/change_wallpaper.sh --dry-run; then
+            echo "::error::el script debería haber fallado con CIUDAD inválida ('Buenos Aires') y no lo hizo"
+            exit 1
+          fi
+          echo "OK: el script rechazó correctamente la ciudad inválida."

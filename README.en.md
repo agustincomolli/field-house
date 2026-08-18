@@ -33,7 +33,7 @@ The installer will:
 4. Generate your configuration at `~/.config/field-house/config.conf`.
 5. Enable the `systemd` timers so the wallpaper updates on its own.
 
-> ⚠️ **Reinstalling = factory install.** If you already have a previous install, `install.sh` detects it and wipes it completely before copying the new one: program, images (including any you customized), configuration, and previous logs. Nothing from the old install is kept.
+> ℹ️ **Reinstalling backs up the previous install by default.** If you already have a previous install, `install.sh` detects it and, after confirming, moves the program, images (customized ones included), configuration, and logs to a `.bak.TIMESTAMP` copy before installing the new version. Use `./install.sh --no-backup` if you'd rather delete it directly without a backup. More detail in [INSTALLATION.en.md](INSTALLATION.en.md#reinstalling--updating).
 
 ImageMagick is optional, only needed if you want the crossfade transition between wallpapers:
 
@@ -50,16 +50,16 @@ Once installed, there's nothing else to do — the wallpaper updates on its own 
 systemctl --user status field-house.timer
 
 # Force an update right now
-~/.local/share/field-house/bin/cambiar_fondo.sh
+~/.local/share/field-house/bin/change_wallpaper.sh
 
 # Simulate without touching anything (which wallpaper would be applied)
-~/.local/share/field-house/bin/cambiar_fondo.sh --dry-run
+~/.local/share/field-house/bin/change_wallpaper.sh --dry-run
 
 # Full help (options, paths)
-~/.local/share/field-house/bin/cambiar_fondo.sh --help
+~/.local/share/field-house/bin/change_wallpaper.sh --help
 
 # Show version
-~/.local/share/field-house/bin/cambiar_fondo.sh --version
+~/.local/share/field-house/bin/change_wallpaper.sh --version
 
 # View the log
 tail -f ~/.local/state/field-house/log.txt

@@ -4,6 +4,54 @@ Todas las versiones notables de este proyecto se documentan acá.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.1.0/), y las versiones siguen [SemVer](https://semver.org/lang/es/) (MAJOR.MINOR.PATCH).
 
+## [1.2.0] — 2026-08-18
+
+### Agregado
+- **`install.sh --no-backup`**: opción para reinstalar borrando directamente
+  una instalación previa (sin el `mv` a `.bak.FECHAHORA` que ahora es el
+  comportamiento por defecto). Útil para iterar rápido en desarrollo, o
+  cuando el usuario ya resguardó lo que le importaba por su cuenta.
+- **`install.sh --help` / `install.sh --version`**: banderas de ayuda y
+  versión, en línea con las que ya tenía `bin/change_wallpaper.sh`.
+
+### Cambiado
+- **`bin/cambiar_fondo.sh` renombrado a `bin/change_wallpaper.sh`** (nombre del
+  archivo únicamente; las variables internas del script y los nombres de
+  archivo de imágenes siguen en español). Actualizado en todas las
+  referencias: `install.sh`, `uninstall.sh`, los `.service` de systemd, el CI
+  y toda la documentación (ES/EN).
+- Imágenes de `fondos/` recomprimidas: el set completo pasó de ~7 MB a
+  ~2.2 MB, con tamaños homogéneos entre sí (antes iban de ~520 KB a ~1.7 MB
+  según el archivo; ahora todas están en el rango ~120–380 KB).
+
+### Corregido
+- `install.sh`/`uninstall.sh`: el prompt de confirmación de reinstalación no
+  mencionaba explícitamente la pérdida de imágenes personalizadas en la
+  misma línea que se confirma; ahora el mensaje de advertencia y la pregunta
+  de confirmación están unificados en un solo bloque inequívoco.
+- `install.sh`: ya no borra una instalación previa sin resguardo por
+  defecto. Antes de eliminar `$DATOS_APP`/`$CONFIG_DIR`/`$STATE_DIR`
+  existentes, los mueve a `*.bak.FECHAHORA` en la misma ubicación; el
+  mensaje final indica dónde quedó el resguardo. Este resguardo se puede
+  saltear explícitamente con `--no-backup` (ver "Agregado" arriba).
+- `install.sh`: el parseo de `--no-backup`/`--help`/`--version`/argumentos
+  desconocidos estaba ubicado antes de la definición de las funciones de
+  color (`info`/`success`/`warning`/`error`), así que un argumento
+  desconocido fallaba con `command not found` (exit 127) en vez de mostrar
+  el mensaje de error esperado (exit 1). Se reordenó el archivo para que las
+  funciones de color se definan primero.
+- `bin/change_wallpaper.sh`: `min_a_hora()` normaliza minutos >= 1440 antes
+  de formatear (`MIN_NOCHE` podía superar las 24 hs cuando el atardecer real,
+  en `MODO_HORARIOS=auto`, ocurre después de las 22:00, produciendo mensajes
+  de log como "24:50" en vez de una hora válida del día siguiente).
+- `.github/workflows/shellcheck.yml`: el smoke test ahora corre dos veces —
+  una con `MODO_HORARIOS=fijo` (como antes) y otra con `MODO_HORARIOS=auto`
+  contra una ciudad conocida, más un tercer caso con las variables nuevas
+  (`MODO_HORARIOS`, `TTL_CACHE_CLIMA`, `MAX_LOG_BYTES`) explícitas en el
+  `config.conf` de prueba. Antes solo se ejercitaba el modo fijo con los
+  valores por defecto, dejando sin cobertura automatizada el camino feliz
+  del modo automático y la validación de esas tres variables.
+
 ## [1.1.0] — 2026-08-17
 
 ### Agregado
