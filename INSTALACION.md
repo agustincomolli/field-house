@@ -9,18 +9,22 @@ Este documento explica en detalle cómo funciona cada parte del programa, y cóm
 ```
 field-house/
 ├── bin/
-│   └── change_wallpaper.sh              # El script que hace el trabajo
-├── fondos/                           # Las 9 imágenes de fondo
+│   └── change_wallpaper.sh           # Motor Linux/XFCE
+├── windows/
+│   ├── Change-Wallpaper.ps1          # Motor Windows 10/11
+│   ├── Install.ps1                   # Instalador Windows
+│   └── Uninstall.ps1                 # Desinstalador Windows
+├── fondos/                           # Las 9 imágenes de fondo (comunes a ambas plataformas)
 ├── systemd/
-│   ├── field-house.service           # Servicio que ejecuta el script
+│   ├── field-house.service           # Servicio que ejecuta el motor Linux
 │   ├── field-house.timer             # Timer que lo dispara cada hora
 │   └── field-house-login.service     # Servicio que corre al iniciar sesión
 ├── .github/workflows/
-│   └── shellcheck.yml                # CI: valida los scripts en cada push
+│   └── shellcheck.yml                # CI: valida los scripts bash en cada push
 ├── .gitattributes                    # Fuerza LF (Unix) en scripts y workflows
 ├── CHANGELOG.md                      # Registro de cambios por versión
-├── install.sh                        # Instalador interactivo
-├── uninstall.sh                      # Desinstalador
+├── install.sh                        # Instalador interactivo (Linux)
+├── uninstall.sh                      # Desinstalador (Linux)
 ├── README.md / README.en.md
 ├── INSTALACION.md / INSTALLATION.en.md
 ├── CONTRIBUTING.md
@@ -194,7 +198,55 @@ El objetivo de diseño es **degradar con elegancia pero fallar con claridad**: e
 - **Log rotado.** Cada línea es una ejecución (24/día), por lo que crece poco, pero aún así el log se rota a `log.txt.1` cuando supera `MAX_LOG_BYTES` (1 MiB por defecto), conservando solo la copia más reciente.
 - **`--dry-run` para diagnóstico.** `change_wallpaper.sh --dry-run` (opcionalmente con `--reboot`) imprime la franja, el clima y el fondo que se aplicaría **sin** tocar xfconf, sin escribir logs ni estado, y sin esperas ni lock. Sirve para probar la lógica de clima/franjas en cualquier máquina, y es lo primero que pedimos en un reporte de problema.
 
-## Solución de problemas
+## Windows: diferencias respecto a Linux
+
+La versión Windows (`windows/Change-Wallpaper.ps1`, `Install.ps1`, `Uninstall.ps1`) replica la misma lógica de negocio que la versión Linux — franjas horarias, modo `auto` según el sol, clima con caché y reintentos, validación de configuración, rotación de log — con los mismos nombres conceptuales (las claves de `config.json` son PascalCase de las mismas variables de `config.conf`: `Ciudad` ↔ `CIUDAD`, `ModoHorarios` ↔ `MODO_HORARIOS`, etc.). Todo lo de las secciones "Franjas horarias", "Clima" y "Validaciones y comportamiento robusto" de más arriba aplica igual en Windows; acá se documenta solo lo que **cambia** por ser una plataforma distinta.
+
+| Concepto | Linux | Windows |
+|---|---|---|
+| Aplicar el fondo | `xfconf-query` (propiedades `last-image` de XFCE) | `SystemParametersInfo` (Win32, vía P/Invoke) — aplica a todos los monitores de una vez, sin iterar |
+| Ejecución periódica | Timer de `systemd` (usuario) | Tarea Programada `FieldHouseWallpaper` (disparador horario) |
+| Ejecución al iniciar sesión | `field-house-login.service` (`--reboot`) | Tarea Programada `FieldHouseWallpaperLogin` (disparador `AtLogOn`, con `-Reboot`) |
+| Lock anti-concurrencia | `flock` sobre un archivo | `System.Threading.Mutex` con nombre de sesión |
+| Configuración | `~/.config/field-house/config.conf` (shell vars) | `%APPDATA%\FieldHouse\config.json` (JSON) |
+| Programa e imágenes | `~/.local/share/field-house/` | `%LOCALAPPDATA%\FieldHouse\` |
+| Logs y caché | `~/.local/state/field-house/` (separado por XDG) | `%LOCALAPPDATA%\FieldHouse\state\` (Windows no separa esto tan estrictamente) |
+| Consultas HTTP | `curl` | `Invoke-WebRequest` (clima, texto plano) / `Invoke-RestMethod` (horarios del sol y geolocalización, JSON) |
+| Transición de fundido | Sí, con ImageMagick (opcional) | No disponible; el cambio es directo |
+| Formatos de imagen aceptados | JPG (los que trae el proyecto) | JPG (soportado nativamente por `SystemParametersInfo` desde Windows 7) |
+
+### Política de ejecución de PowerShell
+
+Windows bloquea por defecto la ejecución de scripts `.ps1` (`Restricted`). En vez de pedirte que cambies esa política de forma global y persistente con `Set-ExecutionPolicy`, tanto `Install.ps1` como las Tareas Programadas que instala invocan el intérprete con `-ExecutionPolicy Bypass` acotado **a esa única invocación**: tu política de ejecución del sistema no se toca. Si al correr `.\Install.ps1` directamente PowerShell lo bloquea, usá:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Install.ps1
+```
+
+### Tareas Programadas
+
+`Install.ps1` registra dos tareas con `Register-ScheduledTask` (no usa un archivo `.xml` estático, para no tener que sustituir rutas de usuario dentro de una plantilla):
+
+| Tarea | Disparador | Equivalente Linux |
+|---|---|---|
+| `FieldHouseWallpaper` | Cada 1 hora, indefinidamente | `field-house.timer` |
+| `FieldHouseWallpaperLogin` | Al iniciar sesión (`AtLogOn`), con `-Reboot` | `field-house-login.service` |
+
+Ambas corren con el principal `Interactive` del usuario actual (no piden ni guardan contraseña) y usan el mismo ejecutable de PowerShell (`powershell.exe` o `pwsh.exe`) con el que se corrió `Install.ps1`.
+
+```powershell
+# Ver el estado
+Get-ScheduledTask -TaskName 'FieldHouseWallpaper', 'FieldHouseWallpaperLogin'
+
+# Ver el historial de ejecuciones (Visor de Eventos, vía PowerShell)
+Get-ScheduledTaskInfo -TaskName 'FieldHouseWallpaper'
+
+# Forzar un disparo manual de la tarea (en vez de correr el script directo)
+Start-ScheduledTask -TaskName 'FieldHouseWallpaper'
+```
+
+
+## Solución de problemas (Linux)
 
 **El timer no corre / `systemctl --user status` da error:**
 Confirmá que el bus de sesión de usuario esté activo: `systemctl --user status` sin argumentos no debería fallar. En algunas instalaciones mínimas puede hacer falta `loginctl enable-linger $USER` para que los servicios de usuario sigan corriendo aunque no haya sesión gráfica abierta (no debería ser necesario en un uso normal de escritorio).
@@ -246,3 +298,38 @@ Editá `OnCalendar=hourly` en `~/.config/systemd/user/field-house.timer`, por ej
 
 **La ubicación detectada automáticamente durante la instalación no era la correcta:**
 El instalador usa geolocalización por IP, que puede desviarse varios kilómetros según tu proveedor de internet. Simplemente editá `CIUDAD` en `~/.config/field-house/config.conf` con el valor correcto.
+
+## Solución de problemas (Windows)
+
+**`Install.ps1` no corre, PowerShell muestra un error de política de ejecución:**
+Es el bloqueo por defecto de Windows para scripts `.ps1` (no es un problema del proyecto). Corré en su lugar: `powershell -ExecutionPolicy Bypass -File .\Install.ps1`. Esto no cambia tu política de ejecución de forma permanente, solo para esa invocación.
+
+**Las tareas no corren / `Get-ScheduledTask` no las muestra:**
+Confirmá que el registro haya funcionado sin errores durante la instalación (revisá la salida de `Install.ps1`). Si necesitás reintentar sin reinstalar todo, podés registrar las tareas a mano copiando el bloque `Register-ScheduledTask` de `Install.ps1` en una consola de PowerShell.
+
+**El fondo no cambia aunque el script corre bien a mano:**
+Ejecutá `& "$env:LOCALAPPDATA\FieldHouse\bin\Change-Wallpaper.ps1"` directamente y confirmá que no tire error. Si corre bien a mano pero no vía tarea programada, revisá en el Programador de tareas (`taskschd.msc`) la pestaña "Historial" de `FieldHouseWallpaper` — ahí Windows registra si la tarea se disparó y con qué código de salida.
+
+**El clima no se detecta bien:**
+Probá `Invoke-WebRequest "https://wttr.in/TuCiudad?format=%C"` en PowerShell y mirá `.Content` para ver el texto exacto que devuelve. Los mismos criterios de palabras clave que en Linux aplican (nublado: `overcast|cloudy`; lluvia: `rain|drizzle|shower|thunder|mist|fog`), ajustables en `windows/Change-Wallpaper.ps1`. El caché de clima vive en `%LOCALAPPDATA%\FieldHouse\state\clima.cache.json`; borralo si necesitás forzar una consulta nueva.
+
+**El log dice `AVISO: no se pudo obtener la salida/puesta del sol`:**
+Mismo caso que en Linux: pasa con `"ModoHorarios": "auto"` cuando la consulta a wttr.in falla o tu ciudad no la resuelve. El script usa los horarios fijos de `config.json` para esa corrida.
+
+**El log dice `ERROR: Ciudad inválida` (o `HoraInicio... inválida`):**
+Editá el campo correspondiente en `%APPDATA%\FieldHouse\config.json` con el formato que pide el mensaje (ciudad sin espacios ni tildes; horas en `HH:MM` de 24 hs) y volvé a correr el script.
+
+**Quiero ver qué fondo se va a aplicar sin esperar a la próxima hora:**
+`& "$env:LOCALAPPDATA\FieldHouse\bin\Change-Wallpaper.ps1" -DryRun`. Imprime la franja, el clima y el fondo elegido sin tocar nada, sin escribir logs.
+
+**Al prender la compu no hay internet todavía y el fondo arranca sin clima:**
+Igual que en Linux: la tarea de inicio de sesión reintenta el clima según `EsperaReintentoClima`/`ReintentosClimaInicial` en `config.json`, aplicando mientras tanto el fondo base. Se corrige solo en el próximo disparo horario si la red tarda más que eso.
+
+**El fondo cambia pero se ve "estirado" o con bordas negras:**
+Es la configuración de ajuste de imagen de Windows (Configuración → Personalización → Fondo → "Ajuste de imagen"), no algo que controle este proyecto. Las 9 imágenes son 16:9; para que se vean bien en monitores de otra proporción, elegí "Rellenar" o "Ajustar" en esa configuración de Windows (se aplica una sola vez, no hace falta repetirlo).
+
+**La ubicación detectada automáticamente durante la instalación no era la correcta:**
+Igual que en Linux: es geolocalización por IP, puede desviarse. Editá `Ciudad` en `%APPDATA%\FieldHouse\config.json` con el valor correcto.
+
+**Quiero desinstalar y no encuentro `Uninstall.ps1`:**
+Está en la misma carpeta `windows\` del repositorio que clonaste — si borraste esa carpeta, podés eliminar las tareas a mano con `Unregister-ScheduledTask -TaskName 'FieldHouseWallpaper','FieldHouseWallpaperLogin' -Confirm:$false` y después borrar `%LOCALAPPDATA%\FieldHouse` y `%APPDATA%\FieldHouse`.

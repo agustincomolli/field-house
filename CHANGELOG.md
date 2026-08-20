@@ -7,6 +7,35 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.1.0/), y las
 ## [1.2.0] — 2026-08-18
 
 ### Agregado
+- **Soporte para Windows 10 y 11**, en `windows/`: `Change-Wallpaper.ps1`
+  (motor, equivalente funcional de `bin/change_wallpaper.sh`),
+  `Install.ps1` y `Uninstall.ps1`. Usa `SystemParametersInfo` (Win32, vía
+  P/Invoke) para aplicar el fondo, `Invoke-RestMethod`/`Invoke-WebRequest`
+  para las consultas a wttr.in, y Tareas Programadas (una horaria y otra en
+  el inicio de sesión) en vez de systemd. Replica la misma lógica de
+  franjas horarias, modo `auto` según el sol, clima con caché, reintentos
+  en `-Reboot`, rotación de log y validación de configuración que la
+  versión Linux — mismos nombres de propiedad en `config.json` que las
+  variables de `config.conf`, para que la documentación de "Cómo funciona"
+  sea común a ambas plataformas. No incluye la transición de fundido entre
+  fondos (que en Linux depende de ImageMagick): el cambio es directo.
+  Revisado a mano en detalle (no hay entorno con PowerShell disponible en
+  este momento para correr un linter automatizado como `PSScriptAnalyzer`
+  contra el código): se corrigieron durante la revisión, antes de la
+  primera publicación, un clonado inválido de `PSCustomObject`
+  (`.PSObject.Copy()` no existe; se reconstruye el objeto a mano), un
+  mutex con prefijo `Global\` que puede requerir privilegios elevados
+  (se cambió a un mutex de sesión, suficiente para coordinar ejecuciones
+  del mismo usuario), una referencia insegura a `$script:Config` bajo
+  `Set-StrictMode` en la primera ejecución sin `config.json` (rotación de
+  log), el uso de `Invoke-RestMethod` para una respuesta de texto plano
+  (se cambió a `Invoke-WebRequest` + `.Content`, que no intenta interpretar
+  el cuerpo), y un `RepetitionDuration` de `[TimeSpan]::MaxValue` en la
+  tarea programada que puede exceder el límite real del Programador de
+  tareas de Windows. **Recomendamos probar esta primera versión con
+  atención en Windows real** y reportar cualquier problema — ver
+  "Contribuir" para cómo correr `PSScriptAnalyzer` manualmente hasta que
+  haya CI dedicado para PowerShell.
 - **`install.sh --no-backup`**: opción para reinstalar borrando directamente
   una instalación previa (sin el `mv` a `.bak.FECHAHORA` que ahora es el
   comportamiento por defecto). Útil para iterar rápido en desarrollo, o

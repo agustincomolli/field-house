@@ -9,18 +9,22 @@ This document explains in detail how each part of the program works, and how to 
 ```
 field-house/
 ├── bin/
-│   └── change_wallpaper.sh              # The script that does the work
-├── fondos/                           # The 9 wallpaper images
+│   └── change_wallpaper.sh           # Linux/XFCE engine
+├── windows/
+│   ├── Change-Wallpaper.ps1          # Windows 10/11 engine
+│   ├── Install.ps1                   # Windows installer
+│   └── Uninstall.ps1                 # Windows uninstaller
+├── fondos/                           # The 9 wallpaper images (shared by both platforms)
 ├── systemd/
-│   ├── field-house.service           # Service that runs the script
+│   ├── field-house.service           # Service that runs the Linux engine
 │   ├── field-house.timer             # Timer that triggers it hourly
 │   └── field-house-login.service     # Service that runs at login
 ├── .github/workflows/
-│   └── shellcheck.yml                # CI: lints the scripts on every push
+│   └── shellcheck.yml                # CI: lints the bash scripts on every push
 ├── .gitattributes                    # Forces LF (Unix) in scripts and workflows
 ├── CHANGELOG.md                      # Version-by-version changelog
-├── install.sh                        # Interactive installer
-├── uninstall.sh                      # Uninstaller
+├── install.sh                        # Interactive installer (Linux)
+├── uninstall.sh                      # Uninstaller (Linux)
 ├── README.md / README.en.md
 ├── INSTALACION.md / INSTALLATION.en.md
 ├── CONTRIBUTING.md
@@ -196,7 +200,54 @@ The design goal is to **degrade gracefully but fail clearly**: the script surviv
 - **Rotated log.** Each line is a single run (24/day), so it grows slowly, but the log is still rotated to `log.txt.1` once it exceeds `MAX_LOG_BYTES` (1 MiB by default), keeping only the most recent copy.
 - **`--dry-run` for diagnostics.** `change_wallpaper.sh --dry-run` (optionally with `--reboot`) prints the time slot, weather, and wallpaper that would be applied **without** touching xfconf, without writing logs or state, and without waits or the lock. It's useful for testing the time/weather logic on any machine, and it's the first thing we ask for in a bug report.
 
-## Troubleshooting
+## Windows: differences from Linux
+
+The Windows version (`windows/Change-Wallpaper.ps1`, `Install.ps1`, `Uninstall.ps1`) replicates the same business logic as the Linux version — time slots, `auto` mode based on the sun, weather with caching and retries, configuration validation, log rotation — with the same conceptual names (`config.json` keys are the PascalCase form of the same `config.conf` variables: `Ciudad` ↔ `CIUDAD`, `ModoHorarios` ↔ `MODO_HORARIOS`, etc.). Everything in the "Time slots", "Weather", and "Validation and robustness" sections above applies equally on Windows; this section documents only what **differs** because it's a different platform.
+
+| Concept | Linux | Windows |
+|---|---|---|
+| Applying the wallpaper | `xfconf-query` (XFCE `last-image` properties) | `SystemParametersInfo` (Win32, via P/Invoke) — applies to all monitors at once, no iteration needed |
+| Periodic execution | `systemd` user timer | Scheduled Task `FieldHouseWallpaper` (hourly trigger) |
+| Login execution | `field-house-login.service` (`--reboot`) | Scheduled Task `FieldHouseWallpaperLogin` (`AtLogOn` trigger, with `-Reboot`) |
+| Anti-concurrency lock | `flock` on a file | `System.Threading.Mutex` with a session-scoped name |
+| Configuration | `~/.config/field-house/config.conf` (shell vars) | `%APPDATA%\FieldHouse\config.json` (JSON) |
+| Program and images | `~/.local/share/field-house/` | `%LOCALAPPDATA%\FieldHouse\` |
+| Logs and cache | `~/.local/state/field-house/` (separated per XDG) | `%LOCALAPPDATA%\FieldHouse\state\` (Windows doesn't separate this as strictly) |
+| HTTP queries | `curl` | `Invoke-WebRequest` (weather, plain text) / `Invoke-RestMethod` (sun schedule and geolocation, JSON) |
+| Crossfade transition | Yes, with ImageMagick (optional) | Not available; the change is instant |
+| Accepted image formats | JPG (the ones bundled with the project) | JPG (natively supported by `SystemParametersInfo` since Windows 7) |
+
+### PowerShell execution policy
+
+Windows blocks `.ps1` script execution by default (`Restricted`). Instead of asking you to change that policy globally and permanently with `Set-ExecutionPolicy`, both `Install.ps1` and the Scheduled Tasks it installs invoke the interpreter with `-ExecutionPolicy Bypass` scoped **to that single invocation**: your system-wide execution policy is never touched. If running `.\Install.ps1` directly gets blocked, use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Install.ps1
+```
+
+### Scheduled Tasks
+
+`Install.ps1` registers two tasks with `Register-ScheduledTask` (it doesn't use a static `.xml` file, to avoid having to substitute user paths inside a template):
+
+| Task | Trigger | Linux equivalent |
+|---|---|---|
+| `FieldHouseWallpaper` | Every 1 hour, indefinitely | `field-house.timer` |
+| `FieldHouseWallpaperLogin` | At logon (`AtLogOn`), with `-Reboot` | `field-house-login.service` |
+
+Both run under the `Interactive` principal of the current user (no password requested or stored) and use the same PowerShell executable (`powershell.exe` or `pwsh.exe`) that ran `Install.ps1`.
+
+```powershell
+# Check status
+Get-ScheduledTask -TaskName 'FieldHouseWallpaper', 'FieldHouseWallpaperLogin'
+
+# Check run history
+Get-ScheduledTaskInfo -TaskName 'FieldHouseWallpaper'
+
+# Force a manual trigger (instead of running the script directly)
+Start-ScheduledTask -TaskName 'FieldHouseWallpaper'
+```
+
+## Troubleshooting (Linux)
 
 **The timer doesn't run / `systemctl --user status` errors out:**
 Confirm the user session bus is active: `systemctl --user status` with no arguments shouldn't fail. On some minimal installs you might need `loginctl enable-linger $USER` so user services keep running even without a graphical session open (shouldn't be necessary for normal desktop use).
@@ -248,3 +299,38 @@ Edit `OnCalendar=hourly` in `~/.config/systemd/user/field-house.timer`, for exam
 
 **The location automatically detected during install wasn't correct:**
 The installer uses IP-based geolocation, which can be off by several kilometers depending on your internet provider. Just edit `CIUDAD` in `~/.config/field-house/config.conf` with the right value.
+
+## Troubleshooting (Windows)
+
+**`Install.ps1` won't run, PowerShell shows an execution-policy error:**
+That's Windows's default block for `.ps1` scripts (not a bug in the project). Run this instead: `powershell -ExecutionPolicy Bypass -File .\Install.ps1`. This doesn't change your execution policy permanently, only for that one run.
+
+**The tasks don't run / `Get-ScheduledTask` doesn't show them:**
+Confirm the registration succeeded without errors during install (check `Install.ps1`'s output). If you need to retry without reinstalling everything, you can register the tasks by hand by copying the `Register-ScheduledTask` block from `Install.ps1` into a PowerShell console.
+
+**The wallpaper doesn't change even though the script runs fine manually:**
+Run `& "$env:LOCALAPPDATA\FieldHouse\bin\Change-Wallpaper.ps1"` directly and confirm it doesn't error out. If it works by hand but not via the scheduled task, check the "History" tab of `FieldHouseWallpaper` in Task Scheduler (`taskschd.msc`) — that's where Windows logs whether the task fired and its exit code.
+
+**Weather isn't detected correctly:**
+Try `Invoke-WebRequest "https://wttr.in/YourCity?format=%C"` in PowerShell and check `.Content` for the exact text it returns. The same keyword criteria as on Linux apply (overcast: `overcast|cloudy`; rain: `rain|drizzle|shower|thunder|mist|fog`), adjustable in `windows/Change-Wallpaper.ps1`. The weather cache lives at `%LOCALAPPDATA%\FieldHouse\state\clima.cache.json`; delete it if you need to force a fresh query.
+
+**The log says `AVISO: no se pudo obtener la salida/puesta del sol`:**
+Same as on Linux: happens with `"ModoHorarios": "auto"` when the wttr.in query fails or your city doesn't resolve. The script uses the fixed times from `config.json` for that run.
+
+**The log says `ERROR: Ciudad inválida` (or `HoraInicio... inválida`):**
+Edit the relevant field in `%APPDATA%\FieldHouse\config.json` with the format the message asks for (city with no spaces or accents; times as `HH:MM` in 24-hour format) and run the script again.
+
+**I want to see which wallpaper would be applied without waiting for the next hour:**
+`& "$env:LOCALAPPDATA\FieldHouse\bin\Change-Wallpaper.ps1" -DryRun`. It prints the time slot, weather, and chosen wallpaper without touching anything, without writing logs.
+
+**There's no internet yet when the computer turns on, so the wallpaper starts without weather:**
+Same as on Linux: the login task retries the weather according to `EsperaReintentoClima`/`ReintentosClimaInicial` in `config.json`, applying the base wallpaper in the meantime. It corrects itself on the next hourly trigger if the network takes longer than that.
+
+**The wallpaper changes but looks "stretched" or has black borders:**
+That's Windows's image-fit setting (Settings → Personalization → Background → "Choose a fit"), not something this project controls. The 9 images are 16:9; for them to look right on a monitor with a different aspect ratio, choose "Fill" or "Fit" in that Windows setting (it's a one-time setting, no need to repeat it).
+
+**The location automatically detected during install wasn't correct:**
+Same as on Linux: it's IP-based geolocation, it can be off. Edit `Ciudad` in `%APPDATA%\FieldHouse\config.json` with the right value.
+
+**I want to uninstall and can't find `Uninstall.ps1`:**
+It's in the same `windows\` folder of the repository you cloned — if you deleted that folder, you can remove the tasks by hand with `Unregister-ScheduledTask -TaskName 'FieldHouseWallpaper','FieldHouseWallpaperLogin' -Confirm:$false` and then delete `%LOCALAPPDATA%\FieldHouse` and `%APPDATA%\FieldHouse`.
