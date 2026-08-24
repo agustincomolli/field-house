@@ -1,4 +1,4 @@
-name: release-please
+name: Release Please
 
 "on":
   push:
@@ -13,7 +13,8 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - name: Crear o actualizar release
+        uses: googleapis/release-please-action@v4
         with:
           token: "${{ secrets.GITHUB_TOKEN }}"
           release-type: simple
