@@ -198,13 +198,13 @@ jobs:
           }
           $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
 
-          & windows\Change-Wallpaper.ps1 -DryRun
+          & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -DryRun
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error::Change-Wallpaper.ps1 -DryRun (modo fijo) devolvió exit code $LASTEXITCODE"
             exit 1
           }
-          & windows\Change-Wallpaper.ps1 -Version
-          & windows\Change-Wallpaper.ps1 -Help | Out-Null
+          & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -Version
+          & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -Help | Out-Null
 
       - name: Smoke test — modo auto (salida/puesta real del sol, contra wttr.in)
         shell: pwsh
@@ -230,8 +230,12 @@ jobs:
           }
           $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
 
-          $salida = & windows\Change-Wallpaper.ps1 -DryRun
+          $salida = & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -DryRun
           $salida | Write-Host
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Change-Wallpaper.ps1 -DryRun (modo auto) devolvió exit code $LASTEXITCODE"
+            exit 1
+          }
           $textoCompleto = $salida -join "`n"
           $tieneSol = $textoCompleto -match 'Horarios según el sol:'
           $tieneFallback = $textoCompleto -match 'no se pudo obtener la salida/puesta del sol'
@@ -263,7 +267,7 @@ jobs:
           }
           $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
 
-          & windows\Change-Wallpaper.ps1 -DryRun
+          & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -DryRun
           if ($LASTEXITCODE -eq 0) {
             Write-Host "::error::el script debería haber fallado con Ciudad inválida ('Buenos Aires') y no lo hizo"
             exit 1
