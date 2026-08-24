@@ -199,12 +199,25 @@ jobs:
           $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
 
           & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -DryRun
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::Change-Wallpaper.ps1 -DryRun (modo fijo) devolvió exit code $LASTEXITCODE"
+          $codigo = $LASTEXITCODE
+          if ($codigo -ne 0) {
+            Write-Host "::error::Change-Wallpaper.ps1 -DryRun (modo fijo) devolvió exit code $codigo"
             exit 1
           }
+
           & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -Version
+          $codigo = $LASTEXITCODE
+          if ($codigo -ne 0) {
+            Write-Host "::error::Change-Wallpaper.ps1 -Version devolvió exit code $codigo"
+            exit 1
+          }
+
           & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -Help | Out-Null
+          $codigo = $LASTEXITCODE
+          if ($codigo -ne 0) {
+            Write-Host "::error::Change-Wallpaper.ps1 -Help devolvió exit code $codigo"
+            exit 1
+          }
 
       - name: Smoke test — modo auto (salida/puesta real del sol, contra wttr.in)
         shell: pwsh
@@ -268,8 +281,10 @@ jobs:
           $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
 
           & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -DryRun
-          if ($LASTEXITCODE -eq 0) {
+          $codigo = $LASTEXITCODE
+          if ($codigo -eq 0) {
             Write-Host "::error::el script debería haber fallado con Ciudad inválida ('Buenos Aires') y no lo hizo"
             exit 1
           }
-          Write-Host "OK: el script rechazó correctamente la ciudad inválida."
+          Write-Host "OK: el script rechazó correctamente la ciudad inválida (exit code $codigo)."
+          exit 0
