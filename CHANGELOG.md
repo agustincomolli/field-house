@@ -4,6 +4,13 @@ Todas las versiones notables de este proyecto se documentan acá.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.1.0/), y las versiones siguen [SemVer](https://semver.org/lang/es/) (MAJOR.MINOR.PATCH).
 
+## [1.3.2](https://github.com/agustincomolli/field-house/compare/v1.3.1...v1.3.2) (2026-08-24)
+
+
+### Bug Fixes
+
+* images ([265f893](https://github.com/agustincomolli/field-house/commit/265f893e6ad2bfa9917891537e2babc6df8a8d87))
+
 ## [1.3.1](https://github.com/agustincomolli/field-house/compare/v1.3.0...v1.3.1) (2026-08-24)
 
 
