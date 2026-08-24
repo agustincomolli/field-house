@@ -210,7 +210,7 @@ function ConvertTo-HoraTexto {
     param([Parameter(Mandatory)][int]$Minutos)
     $min = $Minutos % 1440
     if ($min -lt 0) { $min += 1440 }
-    return '{0:d2}:{1:d2}' -f [math]::Floor($min / 60), ($min % 60)
+    return '{0:00}:{1:00}' -f [int][math]::Floor($min / 60), [int]($min % 60)
 }
 
 # ----------------------------------------------------------------------------
