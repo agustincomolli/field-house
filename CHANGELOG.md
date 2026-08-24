@@ -4,6 +4,18 @@ Todas las versiones notables de este proyecto se documentan acá.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.1.0/), y las versiones siguen [SemVer](https://semver.org/lang/es/) (MAJOR.MINOR.PATCH).
 
+## [1.3.1](https://github.com/agustincomolli/field-house/compare/v1.3.0...v1.3.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* capture PowerShell smoke test exit codes ([2a11d32](https://github.com/agustincomolli/field-house/commit/2a11d3220686f74867de2588f515b19fec40a983))
+* correct release workflow YAML ([e8b7be1](https://github.com/agustincomolli/field-house/commit/e8b7be151095f42c34a97f220313523b36387969))
+* format automatic schedule times ([e6f4c10](https://github.com/agustincomolli/field-house/commit/e6f4c106028fd27742b69a6884c3df9c4c064169))
+* handle expected PowerShell validation failure ([715029a](https://github.com/agustincomolli/field-house/commit/715029ad6821b65336b06d008ee1afbb187829cb))
+* handle single PowerShell pipeline results ([e4b7c97](https://github.com/agustincomolli/field-house/commit/e4b7c97b833e632d8f2ca53ed9b00a8b0596b40c))
+* make release workflow YAML explicit ([3722ad0](https://github.com/agustincomolli/field-house/commit/3722ad088108ed1f772827cbbcab9f8569738772))
+
 ## [1.3.0] — 2026-08-19
 
 > Nota de versionado: esta versión solo agrega infraestructura de testing y CI (sin cambios de comportamiento para el usuario final), así que el número que devuelven `--version`/`-Version` en los scripts se mantiene en `1.2.0` — no hubo un cambio funcional que ameritara tocarlo. El `1.3.0` de este changelog versiona el estado del *repositorio*, no necesariamente cada binario individual.
