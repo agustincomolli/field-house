@@ -2,7 +2,7 @@
 ============================================================================
 The Field House — Live Wallpaper
 Install.ps1 — instalador (Windows 10 / 11)
-Versión: 1.2.0
+Versión: ver el archivo VERSION
 
 Instala la app para el usuario actual (sin privilegios de administrador,
 todo en las rutas estándar de %LOCALAPPDATA%/%APPDATA%), detecta la
@@ -32,7 +32,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$VERSION = '1.2.0'
+$AppVersion = (Get-Content (Join-Path $PSScriptRoot '..\VERSION') -Raw).Trim()
 
 # ----------------------------------------------------------------------------
 # Colores (mismo estilo que la versión Linux, para consistencia visual)
@@ -44,13 +44,13 @@ function Write-Warn    { param([string]$Msg) Write-Host "!   $Msg" -ForegroundCo
 function Write-Err     { param([string]$Msg) Write-Host "X   $Msg" -ForegroundColor Red }
 
 if ($Version) {
-    Write-Output "The Field House — Live Wallpaper v$VERSION — instalador (Windows)"
+    Write-Output "The Field House — Live Wallpaper v$AppVersion — instalador (Windows)"
     exit 0
 }
 
 if ($Help) {
     @"
-The Field House — Live Wallpaper v$VERSION — instalador (Windows)
+The Field House — Live Wallpaper v$AppVersion — instalador (Windows)
 
 Uso:
   .\Install.ps1               Instalación normal. Si hay una instalación
@@ -83,7 +83,7 @@ $Origen = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 Write-Host ""
 Write-Host "====================================================================="
-Write-Host "       THE FIELD HOUSE — LIVE WALLPAPER — INSTALADOR (v$VERSION)"
+Write-Host "       THE FIELD HOUSE — LIVE WALLPAPER — INSTALADOR (v$AppVersion)"
 Write-Host "====================================================================="
 Write-Host ""
 Write-Host "Este programa cambia el fondo de pantalla de Windows automáticamente"
@@ -270,6 +270,7 @@ New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
 New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
 
 Copy-Item -Path (Join-Path $Origen 'Change-Wallpaper.ps1') -Destination (Join-Path $DatosApp 'bin\Change-Wallpaper.ps1') -Force
+Copy-Item -Path (Join-Path $Origen '..\VERSION') -Destination (Join-Path $DatosApp 'VERSION') -Force
 Copy-Item -Path (Join-Path $Origen '..\fondos\*.jpg') -Destination (Join-Path $DatosApp 'fondos') -Force
 
 # Verificación: si la copia falló parcialmente (por ejemplo un .jpg

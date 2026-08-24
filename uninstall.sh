@@ -10,7 +10,8 @@
 
 set -Eeuo pipefail
 
-VERSION="1.2.0"
+ORIGEN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VERSION="$(tr -d '[:space:]' < "$ORIGEN/VERSION")"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'

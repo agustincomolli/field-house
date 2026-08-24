@@ -2,7 +2,7 @@
 ============================================================================
 The Field House — Live Wallpaper
 Change-Wallpaper.ps1 — motor de la app (Windows 10 / 11)
-Versión: 1.2.0
+Versión: ver el archivo VERSION
 
 Cambia el fondo de pantalla de Windows según franjas horarias FIJAS del
 reloj (o, en MODO_HORARIOS "auto", según la salida/puesta real del sol), y
@@ -55,7 +55,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$VERSION = '1.2.0'
+$AppVersion = (Get-Content (Join-Path $PSScriptRoot '..\VERSION') -Raw).Trim()
 
 # ----------------------------------------------------------------------------
 # RUTAS (convención estándar de Windows para datos de app de usuario)
@@ -83,7 +83,7 @@ $script:CacheHorarios = Join-Path $script:StateDir 'horarios-sol.cache.json'
 
 function Show-Ayuda {
     @"
-The Field House — Live Wallpaper v$VERSION (Windows)
+The Field House — Live Wallpaper v$AppVersion (Windows)
 
 Cambia el fondo de pantalla de Windows según la franja horaria (amanecer,
 mediodía, atardecer, noche) y el clima actual (nublado/lluvia) de tu ciudad.
@@ -111,7 +111,7 @@ Los logs se escriben en:
 }
 
 if ($Version) {
-    Write-Output "The Field House — Live Wallpaper v$VERSION (Windows)"
+    Write-Output "The Field House — Live Wallpaper v$AppVersion (Windows)"
     exit 0
 }
 

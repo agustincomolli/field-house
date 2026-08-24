@@ -21,7 +21,8 @@
 
 set -Eeuo pipefail
 
-VERSION="1.2.0"
+ORIGEN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VERSION="$(tr -d '[:space:]' < "$ORIGEN/VERSION")"
 
 # ----------------------------------------------------------------------------
 # Colores (mismo estilo que setup.sh, para consistencia visual)
@@ -111,9 +112,6 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/field-house"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/field-house"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 CONFIG_FILE="$CONFIG_DIR/config.conf"
-
-# Carpeta donde está este instalador (para copiar bin/, fondos/, systemd/).
-ORIGEN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo
 echo "====================================================================="
@@ -308,6 +306,7 @@ mkdir -p "$DATOS_APP/bin" "$DATOS_APP/fondos" "$CONFIG_DIR" "$STATE_DIR" "$SYSTE
 
 cp "$ORIGEN/bin/change_wallpaper.sh" "$DATOS_APP/bin/change_wallpaper.sh"
 chmod +x "$DATOS_APP/bin/change_wallpaper.sh"
+cp "$ORIGEN/VERSION" "$DATOS_APP/VERSION"
 
 cp "$ORIGEN"/fondos/*.jpg "$DATOS_APP/fondos/"
 

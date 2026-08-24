@@ -2,7 +2,7 @@
 # ============================================================================
 # The Field House — Live Wallpaper
 # change_wallpaper.sh — motor de la app
-# Versión: 1.2.0
+# Versión: ver el archivo VERSION
 #
 # Cambia el fondo de pantalla en XFCE (Linux Mint y derivados) según franjas
 # horarias FIJAS del reloj, y según el clima actual (lluvia/nublado) en
@@ -33,7 +33,8 @@
 
 set -u
 
-VERSION="1.2.0"
+VERSION_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/VERSION"
+VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
 
 # ----------------------------------------------------------------------------
 # RUTAS (convención XDG Base Directory)

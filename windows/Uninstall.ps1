@@ -2,7 +2,7 @@
 ============================================================================
 The Field House — Live Wallpaper
 Uninstall.ps1 — desinstalador (Windows 10 / 11)
-Versión: 1.2.0
+Versión: ver el archivo VERSION
 
 Elimina las Tareas Programadas y borra los archivos instalados por
 Install.ps1. Pregunta antes de borrar la configuración y los logs, por si
@@ -11,12 +11,19 @@ el usuario quiere conservarlos para una reinstalación futura.
 #>
 
 [CmdletBinding()]
-param()
+param(
+    [switch]$Version
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$VERSION = '1.2.0'
+$AppVersion = (Get-Content (Join-Path $PSScriptRoot '..\VERSION') -Raw).Trim()
+
+if ($Version) {
+    Write-Output "The Field House — Live Wallpaper v$AppVersion — desinstalador (Windows)"
+    exit 0
+}
 
 function Write-Info    { param([string]$Msg) Write-Host "==> $Msg" -ForegroundColor Cyan }
 function Write-Success { param([string]$Msg) Write-Host "OK  $Msg" -ForegroundColor Green }
@@ -29,7 +36,7 @@ $TaskNameLogin = 'FieldHouseWallpaperLogin'
 
 Write-Host ""
 Write-Host "====================================================================="
-Write-Host "       THE FIELD HOUSE — DESINSTALADOR (v$VERSION)"
+Write-Host "       THE FIELD HOUSE — DESINSTALADOR (v$AppVersion)"
 Write-Host "====================================================================="
 Write-Host ""
 $confirm = Read-Host "¿Confirmás que querés desinstalar The Field House? [s/N]"
