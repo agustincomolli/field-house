@@ -173,9 +173,9 @@ function Invoke-RotarLog {
 # UTILIDADES DE HORA
 # ----------------------------------------------------------------------------
 
-# ConvertTo-Minutos <"HH:MM">
+# ConvertTo-Minuto <"HH:MM">
 # Convierte una hora en formato 24 horas a minutos desde medianoche.
-function ConvertTo-Minutos {
+function ConvertTo-Minuto {
     param([Parameter(Mandatory)][string]$Hora)
     $partes = $Hora -split ':'
     return ([int]$partes[0] * 60) + [int]$partes[1]
@@ -600,10 +600,10 @@ try {
     $ahora = Get-Date
     $ahoraMin = ($ahora.Hour * 60) + $ahora.Minute
 
-    $minAmanecer  = ConvertTo-Minutos $script:Config.HoraInicioAmanecer
-    $minMediodia  = ConvertTo-Minutos $script:Config.HoraInicioMediodia
-    $minAtardecer = ConvertTo-Minutos $script:Config.HoraInicioAtardecer
-    $minNoche     = ConvertTo-Minutos $script:Config.HoraInicioNoche
+    $minAmanecer  = ConvertTo-Minuto $script:Config.HoraInicioAmanecer
+    $minMediodia  = ConvertTo-Minuto $script:Config.HoraInicioMediodia
+    $minAtardecer = ConvertTo-Minuto $script:Config.HoraInicioAtardecer
+    $minNoche     = ConvertTo-Minuto $script:Config.HoraInicioNoche
 
     if ($script:Config.ModoHorarios -eq 'auto') {
         $horariosSol = Get-HorariosSol -Ciudad $script:Config.Ciudad
