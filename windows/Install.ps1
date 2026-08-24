@@ -276,7 +276,9 @@ Copy-Item -Path (Join-Path $Origen '..\fondos\*.jpg') -Destination (Join-Path $D
 # Verificación: si la copia falló parcialmente (por ejemplo un .jpg
 # ilegible), el motor se quejaría de imágenes faltantes recién al correr.
 # Mejor avisarlo acá, mientras la instalación está fresca.
-$fondosCopiados = (Get-ChildItem -Path (Join-Path $DatosApp 'fondos') -Filter '*.jpg' -File -ErrorAction SilentlyContinue).Count
+$fondosCopiados = @(
+    Get-ChildItem -Path (Join-Path $DatosApp 'fondos') -Filter '*.jpg' -File -ErrorAction SilentlyContinue
+).Count
 if ($fondosCopiados -ne 9) {
     Write-Err "La copia de imágenes no quedó completa: se encontraron $fondosCopiados de 9 archivos .jpg. Revisá la carpeta 'fondos\' del repositorio."
     exit 1

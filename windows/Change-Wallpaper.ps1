@@ -586,7 +586,7 @@ try {
         $fondoNubladoDia, $fondoNubladoNoche,
         $fondoLluviaDia, $fondoLluviaAtard, $fondoLluviaNoche
     )
-    $faltantes = $fondosRequeridos | Where-Object { -not (Test-Path $_) }
+    $faltantes = @($fondosRequeridos | Where-Object { -not (Test-Path $_) })
 
     if ($faltantes.Count -gt 0) {
         Write-FieldHouseLog "ERROR: faltan $($faltantes.Count) imagen(es) de fondo: $($faltantes -join ', ')"
