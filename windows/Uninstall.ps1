@@ -1,4 +1,4 @@
-<#
+﻿<#
 ============================================================================
 The Field House — Live Wallpaper
 Uninstall.ps1 — desinstalador (Windows 10 / 11)

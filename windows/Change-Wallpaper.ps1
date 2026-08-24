@@ -1,4 +1,4 @@
-<#
+﻿<#
 ============================================================================
 The Field House — Live Wallpaper
 Change-Wallpaper.ps1 — motor de la app (Windows 10 / 11)
@@ -181,10 +181,10 @@ function ConvertTo-Minutos {
     return ([int]$partes[0] * 60) + [int]$partes[1]
 }
 
-# ConvertTo-Minutos12h <"HH:MM AM|PM">
+# ConvertTo-Minuto12h <"HH:MM AM|PM">
 # Convierte una hora en formato 12 horas (como la manda wttr.in en su
 # formato j1: "07:32 AM", "06:25 PM") a minutos desde medianoche.
-function ConvertTo-Minutos12h {
+function ConvertTo-Minuto12h {
     param([Parameter(Mandatory)][string]$Hora12)
     if ($Hora12 -notmatch '^(\d{1,2}):(\d{2}) (AM|PM)$') {
         throw "Formato de hora 12h inesperado: '$Hora12'"
@@ -337,6 +337,7 @@ function Get-HorariosSol {
             }
         } catch {
             # Caché corrupto o ilegible: se ignora y se vuelve a consultar.
+            Write-Verbose "No se pudo leer el caché de horarios del sol."
         }
     }
 
@@ -352,8 +353,8 @@ function Get-HorariosSol {
         return $null
     }
 
-    $horaAm = ConvertTo-Minutos12h $risa
-    $horaHa = ConvertTo-Minutos12h $puesta
+    $horaAm = ConvertTo-Minuto12h $risa
+    $horaHa = ConvertTo-Minuto12h $puesta
     $pm = [math]::Floor(($horaAm + $horaHa) / 2)
     $mn = $horaHa + 120
 
@@ -402,6 +403,7 @@ function Get-Clima {
             }
         } catch {
             # Caché corrupto: se ignora y se vuelve a consultar.
+            Write-Verbose "No se pudo leer el caché de clima."
         }
     }
 
@@ -464,6 +466,7 @@ try {
 } catch {
     # Ya estaba cargado en esta sesión (por ejemplo, si se dot-source el
     # script dos veces); no es un error real.
+    Write-Verbose "El tipo Win32 del fondo ya estaba cargado en esta sesión."
 }
 
 # Set-FieldHouseWallpaper <imagen>
@@ -475,6 +478,7 @@ try {
 # el resultado; nunca lanza si falla (para no cortar la ejecución del script
 # por un solo intento fallido de SPI).
 function Set-FieldHouseWallpaper {
+    [CmdletBinding(SupportsShouldProcess)]
     param([Parameter(Mandatory)][string]$Imagen)
 
     if ($DryRun) {
@@ -484,6 +488,10 @@ function Set-FieldHouseWallpaper {
 
     if (-not (Test-Path $Imagen)) {
         Write-FieldHouseLog "AVISO: la imagen '$Imagen' no existe; no se aplicó ningún fondo."
+        return $false
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($Imagen, 'Aplicar como fondo de pantalla')) {
         return $false
     }
 
@@ -682,6 +690,7 @@ finally {
         } catch {
             # El mutex puede no estar tomado si se salió antes del WaitOne
             # (por ejemplo, error de configuración temprano); no es un error.
+            Write-Verbose "No se pudo liberar el mutex; puede que no estuviera tomado."
         }
         $script:MutexHandle.Dispose()
     }

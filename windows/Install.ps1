@@ -1,4 +1,4 @@
-<#
+﻿<#
 ============================================================================
 The Field House — Live Wallpaper
 Install.ps1 — instalador (Windows 10 / 11)
@@ -111,6 +111,7 @@ try {
 } catch {
     # Get-ScheduledTask puede no estar disponible en ediciones muy acotadas
     # de Windows; se asume que no hay tarea previa en ese caso.
+    Write-Verbose "No se pudieron consultar las tareas programadas existentes."
 }
 
 $hayInstalacionPrevia = (Test-Path $DatosApp) -or (Test-Path $ConfigDir) -or $tareaPreviaExiste
@@ -196,6 +197,7 @@ try {
     }
 } catch {
     # Sin internet, o el servicio no respondió: se cae al ingreso manual.
+    Write-Verbose "No se pudo detectar la ubicación automáticamente."
 }
 
 if ($ciudadDetectada) {
