@@ -4,6 +4,39 @@ Todas las versiones notables de este proyecto se documentan acá.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.1.0/), y las versiones siguen [SemVer](https://semver.org/lang/es/) (MAJOR.MINOR.PATCH).
 
+## [1.3.0] — 2026-08-19
+
+> Nota de versionado: esta versión solo agrega infraestructura de testing y CI (sin cambios de comportamiento para el usuario final), así que el número que devuelven `--version`/`-Version` en los scripts se mantiene en `1.2.0` — no hubo un cambio funcional que ameritara tocarlo. El `1.3.0` de este changelog versiona el estado del *repositorio*, no necesariamente cada binario individual.
+
+### Agregado
+- **`tests/change_wallpaper.bats`**: suite de tests unitarios (bats-core)
+  para las funciones puras del motor Linux — `hora_a_minutos`,
+  `min_a_hora` (incluido el caso límite de v1.2.0 con minutos >= 1440),
+  `validar_configuracion` (casos válidos e inválidos para cada variable), y
+  la lógica de decisión de franja horaria + clima (documentada con una
+  copia deliberada dentro del propio archivo de tests, ya que esa lógica
+  vive en el cuerpo principal del script, no en una función con nombre).
+  42 tests, sin dependencia de red ni de una sesión XFCE real.
+- **Guard `FIELD_HOUSE_SOURCE_ONLY`** en `bin/change_wallpaper.sh`: si esta
+  variable de entorno está seteada, el script define todas sus funciones y
+  termina ahí (sin tomar el lock, sin tocar red ni xfconf), permitiendo que
+  la suite de tests haga `source` del archivo real en vez de mantener una
+  copia paralela del código. No afecta la ejecución normal: en producción
+  esta variable nunca se define.
+- **CI para PowerShell** (`.github/workflows/shellcheck.yml`, job nuevo
+  `powershell-checks`, corre en `windows-latest` en paralelo al job de
+  Linux): parseo de sintaxis (AST) de los 3 scripts, `PSScriptAnalyzer`
+  (severidad `Warning`/`Error`, con `PSAvoidUsingWriteHost` excluida a
+  propósito), y los mismos cuatro smoke tests que ya existían para Linux
+  (modo fijo, modo auto contra wttr.in real, configuración inválida) más
+  `-Version`/`-Help`, adaptados a PowerShell. Esto cierra la brecha
+  documentada en v1.2.0: el código Windows había sido revisado a mano, sin
+  un linter real ejecutándose, porque no había entorno con PowerShell
+  disponible durante su desarrollo.
+- **CI para Linux ampliado**: nuevo paso `bats tests/change_wallpaper.bats`
+  en el job `shellcheck`, entre la validación de sintaxis y los smoke
+  tests existentes.
+
 ## [1.2.0] — 2026-08-18
 
 ### Agregado

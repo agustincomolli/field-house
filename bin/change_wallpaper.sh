@@ -535,6 +535,25 @@ consultar_clima() {
 }
 
 # ----------------------------------------------------------------------------
+# GUARD DE TESTING
+# ----------------------------------------------------------------------------
+# Si FIELD_HOUSE_SOURCE_ONLY está seteada (cualquier valor no vacío), el
+# script termina acá, justo después de definir todas las funciones y ANTES
+# de tocar lock/red/xfconf/filesystem de estado. Esto permite a la suite de
+# tests (tests/change_wallpaper.bats) hacer `source` del script real para
+# probar las funciones puras (hora_a_minutos, min_a_hora, validar_configuracion,
+# la lógica de decisión de nublado/lluvia, etc.) sin disparar ningún efecto
+# secundario del cuerpo principal. No afecta la ejecución normal: en
+# producción esta variable nunca se define.
+if [ -n "${FIELD_HOUSE_SOURCE_ONLY:-}" ]; then
+    # shellcheck disable=SC2317
+    # SC2317 (unreachable) es un falso positivo acá: shellcheck no puede
+    # saber que `return` sí es alcanzable cuando el script se invoca con
+    # `source` (el caso real de uso de este guard, desde tests/*.bats).
+    return 0 2>/dev/null || exit 0
+fi
+
+# ----------------------------------------------------------------------------
 # 0) Preparar estado (lock anti-concurrencia, solo en ejecución real)
 # ----------------------------------------------------------------------------
 # Cierra la puerta a que el timer y el servicio de login corran el script a

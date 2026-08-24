@@ -17,6 +17,10 @@ jobs:
       - name: Sintaxis (bash -n)
         run: |
           bash -n bin/change_wallpaper.sh install.sh uninstall.sh
+      - name: Tests unitarios (bats)
+        run: |
+          sudo apt-get install -y bats
+          bats tests/change_wallpaper.bats
       - name: Smoke test — modo fijo (config mínima, valores por defecto)
         run: |
           mkdir -p "$HOME/.config/field-house"
@@ -115,3 +119,153 @@ jobs:
             exit 1
           fi
           echo "OK: el script rechazó correctamente la ciudad inválida."
+  powershell-checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+
+      - name: Parseo AST (sintaxis) de los 3 scripts
+        shell: pwsh
+        run: |
+          # Detecta errores de sintaxis reales (paréntesis/llaves mal
+          # cerrados, tipos inválidos, etc.), equivalente a `bash -n` para
+          # PowerShell. No ejecuta el código, solo lo parsea.
+          $ErrorActionPreference = 'Stop'
+          $archivos = @(
+            'windows\Change-Wallpaper.ps1',
+            'windows\Install.ps1',
+            'windows\Uninstall.ps1'
+          )
+          $huboError = $false
+          foreach ($archivo in $archivos) {
+            $tokens = $null
+            $errores = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $archivo), [ref]$tokens, [ref]$errores
+            ) | Out-Null
+            if ($errores.Count -gt 0) {
+              Write-Host "::error::Errores de sintaxis en $archivo"
+              foreach ($e in $errores) { Write-Host "  $($e.Message) (línea $($e.Extent.StartLineNumber))" }
+              $huboError = $true
+            } else {
+              Write-Host "OK: $archivo"
+            }
+          }
+          if ($huboError) { exit 1 }
+
+      - name: PSScriptAnalyzer (lint)
+        shell: pwsh
+        run: |
+          # Severidad Warning y Error detienen el build; Information no.
+          # No se apunta a "cero warnings" estricto porque algunas reglas de
+          # PSScriptAnalyzer (por ejemplo PSAvoidUsingWriteHost, que acá se
+          # usa a propósito para salida con color en consola interactiva)
+          # no aplican al estilo de este proyecto; se excluyen explícitamente
+          # en vez de silenciarlas por archivo con comentarios repetidos.
+          $ErrorActionPreference = 'Stop'
+          $excluidas = @('PSAvoidUsingWriteHost')
+          $resultados = Invoke-ScriptAnalyzer -Path windows\ -Recurse -Severity Warning, Error -ExcludeRule $excluidas
+          if ($resultados) {
+            $resultados | Format-Table -AutoSize | Out-String | Write-Host
+            Write-Host "::error::PSScriptAnalyzer encontró $($resultados.Count) problema(s)."
+            exit 1
+          }
+          Write-Host "OK: sin hallazgos de PSScriptAnalyzer (severidad Warning/Error)."
+
+      - name: Smoke test — modo fijo (-DryRun)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path "$env:APPDATA\FieldHouse" -Force | Out-Null
+          $config = [PSCustomObject]@{
+            CarpetaFondos          = "$env:GITHUB_WORKSPACE\fondos"
+            Ciudad                 = 'CanuelasAR'
+            ModoHorarios            = 'fijo'
+            HoraInicioAmanecer     = '06:00'
+            HoraInicioMediodia     = '10:00'
+            HoraInicioAtardecer    = '15:00'
+            HoraInicioNoche        = '20:00'
+            EsperaInicialSegundos  = 0
+            ReintentosClimaInicial = 3
+            EsperaReintentoClima   = 60
+            TtlCacheClima          = 600
+            MaxLogBytes            = 1048576
+          }
+          $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
+
+          & windows\Change-Wallpaper.ps1 -DryRun
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Change-Wallpaper.ps1 -DryRun (modo fijo) devolvió exit code $LASTEXITCODE"
+            exit 1
+          }
+          & windows\Change-Wallpaper.ps1 -Version
+          & windows\Change-Wallpaper.ps1 -Help | Out-Null
+
+      - name: Smoke test — modo auto (salida/puesta real del sol, contra wttr.in)
+        shell: pwsh
+        run: |
+          # Igual que el equivalente bash del job de Linux: ejercita el
+          # camino real de Get-HorariosSol (parseo del JSON j1 de wttr.in,
+          # conversión de horas 12h y cálculo de mediodía/noche), con
+          # conectividad real de los runners de GitHub Actions.
+          $ErrorActionPreference = 'Stop'
+          $config = [PSCustomObject]@{
+            CarpetaFondos          = "$env:GITHUB_WORKSPACE\fondos"
+            Ciudad                 = 'CanuelasAR'
+            ModoHorarios            = 'auto'
+            HoraInicioAmanecer     = '06:00'
+            HoraInicioMediodia     = '10:00'
+            HoraInicioAtardecer    = '15:00'
+            HoraInicioNoche        = '20:00'
+            EsperaInicialSegundos  = 0
+            ReintentosClimaInicial = 3
+            EsperaReintentoClima   = 60
+            TtlCacheClima          = 600
+            MaxLogBytes            = 1048576
+          }
+          $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
+
+          $salida = & windows\Change-Wallpaper.ps1 -DryRun
+          $salida | Write-Host
+          $textoCompleto = $salida -join "`n"
+          $tieneSol = $textoCompleto -match 'Horarios según el sol:'
+          $tieneFallback = $textoCompleto -match 'no se pudo obtener la salida/puesta del sol'
+          if (-not $tieneSol -and -not $tieneFallback) {
+            Write-Host "::error::modo auto no generó ninguno de los dos mensajes esperados (ni horarios del sol ni fallback documentado)"
+            exit 1
+          }
+
+      - name: Smoke test — configuración inválida debe fallar (Ciudad con espacio)
+        shell: pwsh
+        run: |
+          # Confirma que Test-Configuracion realmente detiene la ejecución
+          # (exit code != 0) ante un valor inválido, igual que el equivalente
+          # bash de este mismo chequeo en el job de Linux.
+          $ErrorActionPreference = 'Stop'
+          $config = [PSCustomObject]@{
+            CarpetaFondos          = "$env:GITHUB_WORKSPACE\fondos"
+            Ciudad                 = 'Buenos Aires'
+            ModoHorarios            = 'fijo'
+            HoraInicioAmanecer     = '06:00'
+            HoraInicioMediodia     = '10:00'
+            HoraInicioAtardecer    = '15:00'
+            HoraInicioNoche        = '20:00'
+            EsperaInicialSegundos  = 0
+            ReintentosClimaInicial = 3
+            EsperaReintentoClima   = 60
+            TtlCacheClima          = 600
+            MaxLogBytes            = 1048576
+          }
+          $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
+
+          & windows\Change-Wallpaper.ps1 -DryRun
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "::error::el script debería haber fallado con Ciudad inválida ('Buenos Aires') y no lo hizo"
+            exit 1
+          }
+          Write-Host "OK: el script rechazó correctamente la ciudad inválida."

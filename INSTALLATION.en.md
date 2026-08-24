@@ -14,13 +14,15 @@ field-house/
 │   ├── Change-Wallpaper.ps1          # Windows 10/11 engine
 │   ├── Install.ps1                   # Windows installer
 │   └── Uninstall.ps1                 # Windows uninstaller
+├── tests/
+│   └── change_wallpaper.bats         # Unit tests for the Linux engine (bats)
 ├── fondos/                           # The 9 wallpaper images (shared by both platforms)
 ├── systemd/
 │   ├── field-house.service           # Service that runs the Linux engine
 │   ├── field-house.timer             # Timer that triggers it hourly
 │   └── field-house-login.service     # Service that runs at login
 ├── .github/workflows/
-│   └── shellcheck.yml                # CI: lints the bash scripts on every push
+│   └── shellcheck.yml                # CI: lint + unit tests + smoke tests, Linux and Windows
 ├── .gitattributes                    # Forces LF (Unix) in scripts and workflows
 ├── CHANGELOG.md                      # Version-by-version changelog
 ├── install.sh                        # Interactive installer (Linux)
@@ -199,6 +201,50 @@ The design goal is to **degrade gracefully but fail clearly**: the script surviv
 - **No silent xfconf failures.** If any `last-image` property fails to be set, failures are accumulated and logged (with the affected property names). If there are no `last-image` properties at all (fresh XFCE profile), it's reported explicitly.
 - **Rotated log.** Each line is a single run (24/day), so it grows slowly, but the log is still rotated to `log.txt.1` once it exceeds `MAX_LOG_BYTES` (1 MiB by default), keeping only the most recent copy.
 - **`--dry-run` for diagnostics.** `change_wallpaper.sh --dry-run` (optionally with `--reboot`) prints the time slot, weather, and wallpaper that would be applied **without** touching xfconf, without writing logs or state, and without waits or the lock. It's useful for testing the time/weather logic on any machine, and it's the first thing we ask for in a bug report.
+
+## Tests and CI
+
+The project has two layers of automated verification, one per platform, running in parallel on every push/PR (`.github/workflows/shellcheck.yml`, job `shellcheck` for Linux and job `powershell-checks` for Windows):
+
+### Linux
+
+| Step | What it validates |
+|---|---|
+| `shellcheck` | Bash style and common errors across the 3 scripts |
+| `bash -n` | Syntax (without executing) |
+| `bats tests/change_wallpaper.bats` | Unit tests for pure functions: time conversion, `validar_configuracion`, and the time-slot + weather decision logic |
+| Fixed-mode smoke test | `--dry-run` with minimal config |
+| Auto-mode smoke test | `--dry-run` with `MODO_HORARIOS=auto` against real wttr.in (runner connectivity) |
+| Full-config smoke test | `--dry-run` with every new variable explicit in `config.conf` |
+| Invalid-config smoke test | Confirms an invalid `CIUDAD` makes the script fail (exit != 0) |
+
+To run the unit tests on your machine before a PR:
+
+```bash
+sudo apt install bats   # or: npm install -g bats
+bats tests/change_wallpaper.bats
+```
+
+The suite uses a guard (`FIELD_HOUSE_SOURCE_ONLY`) that tells `bin/change_wallpaper.sh` that, when sourced, it should define its functions and stop right there — without taking the lock, without touching the network, without reading a real `config.conf`. This way the tests exercise the functions exactly as they exist in production (a single source of truth), instead of a parallel copy of the code that could drift out of sync. The one exception is the time-slot + weather decision logic, which lives in the script's main body (not in a named function): for that part, `tests/change_wallpaper.bats` keeps a deliberate, commented copy (`decidir_fondo_test`), documented at the end of the file — extracting it into a real function (`decidir_fondo()`) is a pending improvement that would remove that duplication.
+
+### Windows
+
+| Step | What it validates |
+|---|---|
+| AST parsing | Syntax of the 3 `.ps1` files without running them (`[Parser]::ParseFile`) |
+| `PSScriptAnalyzer` | Lint (`Warning`/`Error` severity; `PSAvoidUsingWriteHost` is excluded on purpose, see the comment in the workflow) |
+| Fixed-mode smoke test | `-DryRun` with minimal config, plus `-Version` and `-Help` |
+| Auto-mode smoke test | `-DryRun` with `ModoHorarios: "auto"` against real wttr.in |
+| Invalid-config smoke test | Confirms an invalid `Ciudad` makes the script fail |
+
+To run the lint locally before a PR:
+
+```powershell
+Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+Invoke-ScriptAnalyzer -Path windows\ -Recurse -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
+```
+
+> Note on where this CI comes from: the project's PowerShell code was written and manually reviewed without access to a real PowerShell environment (see the detail in `CHANGELOG.md`, version 1.2.0), which allowed 6 real issues to be caught and fixed during review, but without the guarantee of an actual linter run. This CI job closes that gap starting from the next run onward.
 
 ## Windows: differences from Linux
 
