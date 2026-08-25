@@ -26,7 +26,8 @@ Uso:
 param(
     [switch]$NoBackup,
     [switch]$Help,
-    [switch]$Version
+    [switch]$Version,
+    [switch]$DryRunInstall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,6 +61,9 @@ Uso:
                                 directamente en vez de resguardarla. Perdés
                                 cualquier imagen o configuración
                                 personalizada que no hayas resguardado vos
+    .\Install.ps1 -DryRunInstall Ejecuta el instalador en modo simulación;
+                                                                 registra las tareas con `-WhatIf` sin
+                                                                 efectuar cambios.
                                 mismo antes.
   .\Install.ps1 -Help         Muestra esta ayuda.
   .\Install.ps1 -Version      Muestra la versión del instalador.
@@ -342,38 +346,100 @@ try {
     $pwshExe = 'powershell.exe'
 }
 if (-not $pwshExe) { $pwshExe = 'powershell.exe' }
-
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
-# Nota: $env:USERNAME no incluye el dominio. En una máquina doméstica (el
-# caso de uso principal de este proyecto) esto no es ambiguo. En una PC
-# unida a un dominio corporativo, si el registro de la tarea falla por
-# resolución de usuario, reemplazá $env:USERNAME acá por "$env:USERDOMAIN\$env:USERNAME".
+# Usar la identidad completa de la sesión evita que Register-ScheduledTask
+# intente registrar una tarea con el principal predeterminado (SYSTEM), algo
+# que normalmente requiere elevación aunque la tarea solo sea del usuario.
+$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive
 
 # --- Tarea horaria ---
 $actionHoraria = New-ScheduledTaskAction -Execute $pwshExe `
     -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
-# RepetitionDuration: se usa un valor grande (100 años) en vez de
-# [TimeSpan]::MaxValue, que puede exceder el límite real que admite el
-# Programador de tareas de Windows y hacer fallar el registro de la tarea.
-$duracionRepeticion = New-TimeSpan -Days (365 * 100)
+# RepetitionDuration: usar un valor grande pero dentro de límites razonables
+# Evita valores excesivos que el Programador de tareas puede rechazar (p.ej. P36500D)
+$duracionRepeticion = New-TimeSpan -Days 365
 $triggerHoraria = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration $duracionRepeticion
 $settingsHoraria = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 
-Register-ScheduledTask -TaskName $TaskName `
-    -Action $actionHoraria -Trigger $triggerHoraria -Principal $principal -Settings $settingsHoraria `
-    -Description 'The Field House - actualiza el fondo de pantalla cada hora' -Force | Out-Null
+# Registrar tarea horaria con el usuario interactivo actual.
+$regArgs = @{ TaskName = $TaskName; Action = $actionHoraria; Trigger = $triggerHoraria; Settings = $settingsHoraria; Description = 'The Field House - actualiza el fondo de pantalla cada hora'; Force = $true }
+$regArgs.Principal = $principal
+$tareaHorariaCreada = $false
+try {
+    if ($DryRunInstall) {
+        Write-Info "Simulación: se llamaría a Register-ScheduledTask para '$TaskName' (modo WhatIf)."
+        Register-ScheduledTask @regArgs -WhatIf -ErrorAction Stop
+        $tareaHorariaCreada = $true
+    } else {
+        Register-ScheduledTask @regArgs -ErrorAction Stop | Out-Null
+        $tareaHorariaCreada = $true
+    }
+} catch {
+    Write-Warn "Register-ScheduledTask falló: $($_.Exception.Message)"
+    # Intentar fallback con schtasks.exe (más compatible en entornos restringidos)
+    $schtasksCmd = @('/Create', '/TN', $TaskName, '/TR', "$pwshExe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`"", '/SC', 'HOURLY', '/MO', '1', '/F')
+    if ($DryRunInstall) {
+        Write-Info "Simulación fallback: schtasks.exe $($schtasksCmd -join ' ')"
+    } else {
+        try {
+            & schtasks.exe @schtasksCmd | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "Tarea horaria creada con schtasks.exe como fallback."
+                $tareaHorariaCreada = $true
+            } else {
+                Write-Err "Fallback con schtasks.exe falló (código $LASTEXITCODE)."
+            }
+        } catch {
+            Write-Err "Fallback con schtasks.exe falló: $($_.Exception.Message)"
+        }
+    }
+}
 
 # --- Tarea de inicio de sesión (con -Reboot) ---
 $actionLogin = New-ScheduledTaskAction -Execute $pwshExe `
     -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`" -Reboot"
-$triggerLogin = New-ScheduledTaskTrigger -AtLogOn
+$triggerLogin = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $settingsLogin = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 
-Register-ScheduledTask -TaskName $TaskNameLogin `
-    -Action $actionLogin -Trigger $triggerLogin -Principal $principal -Settings $settingsLogin `
-    -Description 'The Field House - corrige el fondo de pantalla al iniciar sesión' -Force | Out-Null
+# Registrar tarea de inicio de sesión con el usuario interactivo actual.
+$regArgsLogin = @{ TaskName = $TaskNameLogin; Action = $actionLogin; Trigger = $triggerLogin; Settings = $settingsLogin; Description = 'The Field House - corrige el fondo de pantalla al iniciar sesión'; Force = $true }
+$regArgsLogin.Principal = $principal
+$tareaLoginCreada = $false
+try {
+    if ($DryRunInstall) {
+        Write-Info "Simulación: se llamaría a Register-ScheduledTask para '$TaskNameLogin' (modo WhatIf)."
+        Register-ScheduledTask @regArgsLogin -WhatIf -ErrorAction Stop
+        $tareaLoginCreada = $true
+    } else {
+        Register-ScheduledTask @regArgsLogin -ErrorAction Stop | Out-Null
+        $tareaLoginCreada = $true
+    }
+} catch {
+    Write-Warn "Register-ScheduledTask (login) falló: $($_.Exception.Message)"
+    $schtasksCmdLogin = @('/Create', '/TN', $TaskNameLogin, '/TR', "$pwshExe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`" -Reboot", '/SC', 'ONLOGON', '/RU', $currentUser, '/RL', 'LIMITED', '/IT', '/F')
+    if ($DryRunInstall) {
+        Write-Info "Simulación fallback: schtasks.exe $($schtasksCmdLogin -join ' ')"
+    } else {
+        try {
+            & schtasks.exe @schtasksCmdLogin | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "Tarea de inicio creada con schtasks.exe como fallback."
+                $tareaLoginCreada = $true
+            } else {
+                Write-Err "Fallback con schtasks.exe (login) falló (código $LASTEXITCODE)."
+            }
+        } catch {
+            Write-Err "Fallback con schtasks.exe (login) falló: $($_.Exception.Message)"
+        }
+    }
+}
 
-Write-Success "Tareas programadas creadas y habilitadas."
+if ($tareaHorariaCreada -and $tareaLoginCreada) {
+    Write-Success "Tareas programadas creadas y habilitadas."
+} else {
+    Write-Err "No se pudieron crear todas las tareas programadas. La instalación no quedó completa."
+    exit 1
+}
 
 # Primera ejecución inmediata, para que el fondo quede aplicado ya mismo en
 # vez de esperar a la próxima hora en punto.
