@@ -4,6 +4,13 @@ Todas las versiones notables de este proyecto se documentan acá.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.1.0/), y las versiones siguen [SemVer](https://semver.org/lang/es/) (MAJOR.MINOR.PATCH).
 
+## [1.3.5](https://github.com/agustincomolli/field-house/compare/v1.3.4...v1.3.5) (2026-08-26)
+
+
+### Bug Fixes
+
+* corregir formato de comentario en Build-Engine.ps1 ([366b730](https://github.com/agustincomolli/field-house/commit/366b730774e87777a7d997b3388cf1a53ae10317))
+
 ## [1.3.4](https://github.com/agustincomolli/field-house/compare/v1.3.3...v1.3.4) (2026-08-26)
 
 
