@@ -1,4 +1,4 @@
-<#
+﻿<#
 ============================================================================
 The Field House — Live Wallpaper
 Build-Engine.ps1 — compila FieldHouseEngine.cs a un .exe nativo
