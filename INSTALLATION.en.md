@@ -11,9 +11,13 @@ field-house/
 ├── bin/
 │   └── change_wallpaper.sh           # Linux/XFCE engine
 ├── windows/
-│   ├── Change-Wallpaper.ps1          # Windows 10/11 engine
-│   ├── Install.ps1                   # Windows installer
-│   └── Uninstall.ps1                 # Windows uninstaller
+│   ├── engine/
+│   │   ├── FieldHouseEngine.cs        # Windows 10/11 engine (C#, compiled at install time)
+│   │   └── Build-Engine.ps1           # Compiles FieldHouseEngine.cs with csc.exe
+│   ├── Install.ps1                    # Windows installer
+│   ├── Install.cmd                    # Shortcut: runs Install.ps1 with the policy bypass already handled
+│   ├── Uninstall.ps1                  # Windows uninstaller
+│   └── Uninstall.cmd                  # Shortcut: runs Uninstall.ps1 with the policy bypass already handled
 ├── tests/
 │   └── change_wallpaper.bats         # Unit tests for the Linux engine (bats)
 ├── fondos/                           # The 9 wallpaper images (shared by both platforms)
@@ -231,11 +235,12 @@ The suite uses a guard (`FIELD_HOUSE_SOURCE_ONLY`) that tells `bin/change_wallpa
 
 | Step | What it validates |
 |---|---|
-| AST parsing | Syntax of the 3 `.ps1` files without running them (`[Parser]::ParseFile`) |
-| `PSScriptAnalyzer` | Lint (`Warning`/`Error` severity; `PSAvoidUsingWriteHost` is excluded on purpose, see the comment in the workflow) |
-| Fixed-mode smoke test | `-DryRun` with minimal config, plus `-Version` and `-Help` |
-| Auto-mode smoke test | `-DryRun` with `ModoHorarios: "auto"` against real wttr.in |
-| Invalid-config smoke test | Confirms an invalid `Ciudad` makes the script fail |
+| AST parsing | Syntax of `Install.ps1` and `Uninstall.ps1` without running them (`[Parser]::ParseFile`) |
+| `PSScriptAnalyzer` | Lint over `Install.ps1`, `Uninstall.ps1`, and `Build-Engine.ps1` (`Warning`/`Error` severity; `PSAvoidUsingWriteHost` is excluded on purpose, see the comment in the workflow) |
+| Engine compilation | `csc.exe` compiles `FieldHouseEngine.cs` on the runner (same step `Install.ps1` performs); a compilation error fails the job |
+| Fixed-mode smoke test | `FieldHouseEngine.exe --dry-run` with minimal config, plus `--version` and `--help` |
+| Auto-mode smoke test | `FieldHouseEngine.exe --dry-run` with `ModoHorarios: "auto"` against real wttr.in |
+| Invalid-config smoke test | Confirms an invalid `Ciudad` makes the executable fail |
 
 To run the lint locally before a PR:
 
@@ -244,43 +249,73 @@ Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
 Invoke-ScriptAnalyzer -Path windows\ -Recurse -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
 ```
 
-> Note on where this CI comes from: the project's PowerShell code was written and manually reviewed without access to a real PowerShell environment (see the detail in `CHANGELOG.md`, version 1.2.0), which allowed 6 real issues to be caught and fixed during review, but without the guarantee of an actual linter run. This CI job closes that gap starting from the next run onward.
+To compile the engine locally and run the smoke tests by hand:
+
+```powershell
+.\windows\engine\Build-Engine.ps1 -RutaCsharp .\windows\engine\FieldHouseEngine.cs -RutaExeSalida .\FieldHouseEngine.exe
+.\FieldHouseEngine.exe --dry-run
+.\FieldHouseEngine.exe --version
+.\FieldHouseEngine.exe --help
+```
+
+> Note on where this CI comes from: the project's PowerShell code was written and manually reviewed without access to a real PowerShell environment (see the detail in `CHANGELOG.md`, version 1.2.0), which allowed 6 real issues to be caught and fixed during review, but without the guarantee of an actual linter run. This CI job closes that gap starting from the next run onward. The Windows engine was later migrated from PowerShell to C# (compiled with `csc.exe` at install time) to eliminate the console flicker that `-WindowStyle Hidden` couldn't reliably suppress in the Scheduled Task; the CI job was updated in the same change to compile and exercise the resulting `.exe` instead of the previous `.ps1`.
 
 ## Windows: differences from Linux
 
-The Windows version (`windows/Change-Wallpaper.ps1`, `Install.ps1`, `Uninstall.ps1`) replicates the same business logic as the Linux version — time slots, `auto` mode based on the sun, weather with caching and retries, configuration validation, log rotation — with the same conceptual names (`config.json` keys are the PascalCase form of the same `config.conf` variables: `Ciudad` ↔ `CIUDAD`, `ModoHorarios` ↔ `MODO_HORARIOS`, etc.). Everything in the "Time slots", "Weather", and "Validation and robustness" sections above applies equally on Windows; this section documents only what **differs** because it's a different platform.
+The Windows version (`windows/engine/FieldHouseEngine.cs`, `Install.ps1`, `Uninstall.ps1`) replicates the same business logic as the Linux version — time slots, `auto` mode based on the sun, weather with caching and retries, configuration validation, log rotation — with the same conceptual names (`config.json` keys are the PascalCase form of the same `config.conf` variables: `Ciudad` ↔ `CIUDAD`, `ModoHorarios` ↔ `MODO_HORARIOS`, etc.). Everything in the "Time slots", "Weather", and "Validation and robustness" sections above applies equally on Windows; this section documents only what **differs** because it's a different platform.
+
+Unlike Linux (where the engine is a bash script interpreted by `bash` on every run), on Windows the engine **is compiled once, at install time**: `Install.ps1` calls `windows\engine\Build-Engine.ps1`, which in turn calls `csc.exe` (the C# compiler bundled with .NET Framework in Windows 10/11 — no need to install the .NET SDK or Visual Studio) to produce `%LOCALAPPDATA%\FieldHouse\bin\FieldHouseEngine.exe`. From then on, both the Scheduled Tasks and a manual invocation run that binary directly; it isn't recompiled again until the next install or reinstall.
 
 | Concept | Linux | Windows |
 |---|---|---|
+| Engine | `bin/change_wallpaper.sh` (bash, interpreted on every run) | `FieldHouseEngine.exe` (C#, compiled once at install time) |
 | Applying the wallpaper | `xfconf-query` (XFCE `last-image` properties) | `SystemParametersInfo` (Win32, via P/Invoke) — applies to all monitors at once, no iteration needed |
-| Periodic execution | `systemd` user timer | Scheduled Task `FieldHouseWallpaper` (hourly trigger) |
-| Login execution | `field-house-login.service` (`--reboot`) | Scheduled Task `FieldHouseWallpaperLogin` (`AtLogOn` trigger, with `-Reboot`) |
+| Periodic execution | `systemd` user timer | Scheduled Task `FieldHouseWallpaper` (hourly trigger), runs the `.exe` directly |
+| Login execution | `field-house-login.service` (`--reboot`) | Scheduled Task `FieldHouseWallpaperLogin` (`AtLogOn` trigger), runs the `.exe` with `--reboot` |
 | Anti-concurrency lock | `flock` on a file | `System.Threading.Mutex` with a session-scoped name |
 | Configuration | `~/.config/field-house/config.conf` (shell vars) | `%APPDATA%\FieldHouse\config.json` (JSON) |
+| Guided reconfiguration | — (edit `config.conf` by hand) | `FieldHouseEngine.exe --config` (interactive console mode) |
 | Program and images | `~/.local/share/field-house/` | `%LOCALAPPDATA%\FieldHouse\` |
 | Logs and cache | `~/.local/state/field-house/` (separated per XDG) | `%LOCALAPPDATA%\FieldHouse\state\` (Windows doesn't separate this as strictly) |
-| HTTP queries | `curl` | `Invoke-WebRequest` (weather, plain text) / `Invoke-RestMethod` (sun schedule and geolocation, JSON) |
+| HTTP queries | `curl` | `HttpWebRequest` (weather and sun schedule, both via wttr.in) |
+| JSON parsing | — (config.conf is plain text, not JSON) | Custom JSON parser (`MiniJson`, no external dependencies — see note below) |
 | Crossfade transition | Yes, with ImageMagick (optional) | Not available; the change is instant |
 | Accepted image formats | JPG (the ones bundled with the project) | JPG (natively supported by `SystemParametersInfo` since Windows 7) |
+| Console window during automatic runs | Not applicable (no console concept in a `systemd` service) | None: the `.exe` is compiled as `/target:winexe`, so the Scheduled Task never draws any window |
+
+> **Why a custom JSON parser (`MiniJson`) instead of `System.Text.Json`?** `System.Text.Json` only comes bundled by default starting with .NET Framework 4.7.2; on earlier versions it would require installing the matching NuGet package. Since the project compiles with a single `csc.exe` invocation (no `dotnet restore`, no NuGet package management), a minimal single-file JSON parser/writer was used instead — enough for the flat format `config.json` uses and for wttr.in's response.
 
 ### PowerShell execution policy
 
-Windows blocks `.ps1` script execution by default (`Restricted`). Instead of asking you to change that policy globally and permanently with `Set-ExecutionPolicy`, both `Install.ps1` and the Scheduled Tasks it installs invoke the interpreter with `-ExecutionPolicy Bypass` scoped **to that single invocation**: your system-wide execution policy is never touched. If running `.\Install.ps1` directly gets blocked, use:
+Windows blocks `.ps1` script execution by default (`Restricted`). This affects `Install.ps1` **and** `Uninstall.ps1` (the only `.ps1` files left in the Windows project): the installed program itself is a native `.exe`, so it doesn't depend on PowerShell's execution policy to run — the block only shows up when invoking these two management scripts.
+
+The simplest way to avoid it is to use `Install.cmd` and `Uninstall.cmd` instead of the `.ps1` files directly: they're one-line shortcuts that invoke the matching `.ps1` with `-ExecutionPolicy Bypass` scoped to that single run, so there's nothing extra to type and no need to touch your execution policy. They can be run from a console or double-clicked from File Explorer. Any argument you pass to the `.cmd` is forwarded as-is to the `.ps1` (e.g. `Install.cmd -NoBackup`).
+
+If you'd rather run the `.ps1` files directly (scripting, CI, or you're just used to it), use:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Install.ps1
+powershell -ExecutionPolicy Bypass -File .\Uninstall.ps1
 ```
+
+Or, if you'd rather not repeat the prefix for every script you run (from this project or any other), you can raise the policy for your user permanently:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+`RemoteSigned` lets you run local unsigned scripts (like this project's) while still requiring a digital signature for scripts downloaded from the internet — it's the generally recommended option for development, safer than a persistent `Bypass`/`Unrestricted`.
 
 ### Scheduled Tasks
 
 `Install.ps1` registers two tasks with `Register-ScheduledTask` (it doesn't use a static `.xml` file, to avoid having to substitute user paths inside a template):
 
-| Task | Trigger | Linux equivalent |
-|---|---|---|
-| `FieldHouseWallpaper` | Every 1 hour, indefinitely | `field-house.timer` |
-| `FieldHouseWallpaperLogin` | At logon (`AtLogOn`), with `-Reboot` | `field-house-login.service` |
+| Task | Trigger | Runs | Linux equivalent |
+|---|---|---|---|
+| `FieldHouseWallpaper` | Every 1 hour, indefinitely | `FieldHouseEngine.exe` (no arguments) | `field-house.timer` |
+| `FieldHouseWallpaperLogin` | At logon (`AtLogOn`) | `FieldHouseEngine.exe --reboot` | `field-house-login.service` |
 
-Both run under the `Interactive` principal of the current user (no password requested or stored) and use the same PowerShell executable (`powershell.exe` or `pwsh.exe`) that ran `Install.ps1`.
+Both run under the `Interactive` principal of the current user (no password requested or stored) and run the `.exe` directly — unlike earlier versions of the project, they no longer invoke `powershell.exe` or any interpreter in between.
 
 ```powershell
 # Check status
@@ -289,7 +324,7 @@ Get-ScheduledTask -TaskName 'FieldHouseWallpaper', 'FieldHouseWallpaperLogin'
 # Check run history
 Get-ScheduledTaskInfo -TaskName 'FieldHouseWallpaper'
 
-# Force a manual trigger (instead of running the script directly)
+# Force a manual trigger (instead of running the .exe directly)
 Start-ScheduledTask -TaskName 'FieldHouseWallpaper'
 ```
 
@@ -348,26 +383,29 @@ The installer uses IP-based geolocation, which can be off by several kilometers 
 
 ## Troubleshooting (Windows)
 
-**`Install.ps1` won't run, PowerShell shows an execution-policy error:**
-That's Windows's default block for `.ps1` scripts (not a bug in the project). Run this instead: `powershell -ExecutionPolicy Bypass -File .\Install.ps1`. This doesn't change your execution policy permanently, only for that one run.
+**`Install.ps1` or `Uninstall.ps1` won't run, PowerShell shows an execution-policy error:**
+That's Windows's default block for `.ps1` scripts (not a bug in the project). The simplest fix is to use `Install.cmd` / `Uninstall.cmd` instead of the `.ps1` directly — they already have the bypass built in. If you'd rather run the `.ps1` by hand: `powershell -ExecutionPolicy Bypass -File .\Install.ps1` (or `.\Uninstall.ps1`, whichever you're running). Neither approach changes your execution policy permanently.
+
+**`Install.ps1` fails at the "2/4 - Installing files" step with a `csc.exe` error:**
+The installer compiles the engine (`FieldHouseEngine.exe`) with `csc.exe`, the C# compiler bundled with Windows 10/11 as part of .NET Framework. If it isn't found at either expected path (`%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe` or its 32-bit variant), it's likely a trimmed-down Windows edition, or an organizational policy that removed that component. You can check whether it's present with: `Test-Path "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"`. If it's missing, .NET Framework 4.x can usually be reinstalled from Settings → Apps → Optional features.
 
 **The tasks don't run / `Get-ScheduledTask` doesn't show them:**
 Confirm the registration succeeded without errors during install (check `Install.ps1`'s output). If you need to retry without reinstalling everything, you can register the tasks by hand by copying the `Register-ScheduledTask` block from `Install.ps1` into a PowerShell console.
 
-**The wallpaper doesn't change even though the script runs fine manually:**
-Run `& "$env:LOCALAPPDATA\FieldHouse\bin\Change-Wallpaper.ps1"` directly and confirm it doesn't error out. If it works by hand but not via the scheduled task, check the "History" tab of `FieldHouseWallpaper` in Task Scheduler (`taskschd.msc`) — that's where Windows logs whether the task fired and its exit code.
+**The wallpaper doesn't change even though the engine runs fine manually:**
+Run `& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe"` directly and confirm it doesn't error out. If it works by hand but not via the scheduled task, check the "History" tab of `FieldHouseWallpaper` in Task Scheduler (`taskschd.msc`) — that's where Windows logs whether the task fired and its exit code.
 
 **Weather isn't detected correctly:**
-Try `Invoke-WebRequest "https://wttr.in/YourCity?format=%C"` in PowerShell and check `.Content` for the exact text it returns. The same keyword criteria as on Linux apply (overcast: `overcast|cloudy`; rain: `rain|drizzle|shower|thunder|mist|fog`), adjustable in `windows/Change-Wallpaper.ps1`. The weather cache lives at `%LOCALAPPDATA%\FieldHouse\state\clima.cache.json`; delete it if you need to force a fresh query.
+Try `Invoke-WebRequest "https://wttr.in/YourCity?format=%C"` in PowerShell and check `.Content` for the exact text it returns. The same keyword criteria as on Linux apply (overcast: `overcast|cloudy`; rain: `rain|drizzle|shower|thunder|mist|fog`), adjustable in `windows/engine/FieldHouseEngine.cs` (the `ClimaCoincide` method, requires recompiling with `Build-Engine.ps1` after the change). The weather cache lives at `%LOCALAPPDATA%\FieldHouse\state\clima.cache.json`; delete it if you need to force a fresh query.
 
 **The log says `AVISO: no se pudo obtener la salida/puesta del sol`:**
-Same as on Linux: happens with `"ModoHorarios": "auto"` when the wttr.in query fails or your city doesn't resolve. The script uses the fixed times from `config.json` for that run.
+Same as on Linux: happens with `"ModoHorarios": "auto"` when the wttr.in query fails or your city doesn't resolve. The engine uses the fixed times from `config.json` for that run.
 
 **The log says `ERROR: Ciudad inválida` (or `HoraInicio... inválida`):**
-Edit the relevant field in `%APPDATA%\FieldHouse\config.json` with the format the message asks for (city with no spaces or accents; times as `HH:MM` in 24-hour format) and run the script again.
+Run `& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --config` to reconfigure step by step with validation as you go, or edit the relevant field by hand in `%APPDATA%\FieldHouse\config.json` with the format the message asks for (city with no spaces or accents; times as `HH:MM` in 24-hour format) and run the engine again.
 
 **I want to see which wallpaper would be applied without waiting for the next hour:**
-`& "$env:LOCALAPPDATA\FieldHouse\bin\Change-Wallpaper.ps1" -DryRun`. It prints the time slot, weather, and chosen wallpaper without touching anything, without writing logs.
+`& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --dry-run`. It prints the time slot, weather, and chosen wallpaper without touching anything, without writing logs.
 
 **There's no internet yet when the computer turns on, so the wallpaper starts without weather:**
 Same as on Linux: the login task retries the weather according to `EsperaReintentoClima`/`ReintentosClimaInicial` in `config.json`, applying the base wallpaper in the meantime. It corrects itself on the next hourly trigger if the network takes longer than that.
@@ -376,7 +414,7 @@ Same as on Linux: the login task retries the weather according to `EsperaReinten
 That's Windows's image-fit setting (Settings → Personalization → Background → "Choose a fit"), not something this project controls. The 9 images are 16:9; for them to look right on a monitor with a different aspect ratio, choose "Fill" or "Fit" in that Windows setting (it's a one-time setting, no need to repeat it).
 
 **The location automatically detected during install wasn't correct:**
-Same as on Linux: it's IP-based geolocation, it can be off. Edit `Ciudad` in `%APPDATA%\FieldHouse\config.json` with the right value.
+Same as on Linux: it's IP-based geolocation, it can be off. Run `--config` to fix it step by step, or edit `Ciudad` by hand in `%APPDATA%\FieldHouse\config.json`.
 
 **I want to uninstall and can't find `Uninstall.ps1`:**
 It's in the same `windows\` folder of the repository you cloned — if you deleted that folder, you can remove the tasks by hand with `Unregister-ScheduledTask -TaskName 'FieldHouseWallpaper','FieldHouseWallpaperLogin' -Confirm:$false` and then delete `%LOCALAPPDATA%\FieldHouse` and `%APPDATA%\FieldHouse`.

@@ -61,7 +61,7 @@ Remove-Item -Path $DatosApp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Success "Borrado: $DatosApp"
 
 Write-Host ""
-$confirmConfig = Read-Host "¿Borrar también la configuración (ciudad, franjas horarias) en $ConfigDir? [s/N]"
+$confirmConfig = Read-Host "¿Borrar también la configuración (ciudad, franjas horarias) en ${ConfigDir}? [s/N]"
 if ($confirmConfig -match '^[sSyY]$') {
     Remove-Item -Path $ConfigDir -Recurse -Force -ErrorAction SilentlyContinue
     Write-Success "Configuración borrada."

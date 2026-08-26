@@ -233,9 +233,10 @@ if (-not $ciudadDetectada) {
     }
 }
 
-# Misma validación que aplica Change-Wallpaper.ps1 en el arranque: si el
-# nombre tuviera caracteres que rompen la URL de wttr.in, nadie se enteraría
-# hasta ver un fondo raro. Mejor fallar acá, con el valor a la vista.
+# Misma validación que aplica FieldHouseEngine.exe en el arranque (método
+# ValidarConfiguracion): si el nombre tuviera caracteres que rompen la URL
+# de wttr.in, nadie se enteraría hasta ver un fondo raro. Mejor fallar acá,
+# con el valor a la vista.
 if ($ciudadDetectada -notmatch '^[A-Za-z0-9.,_-]+$') {
     Write-Err "Ciudad inválida: '$ciudadDetectada'. Solo letras y números (sin espacios ni tildes), opcionalmente . , _ o -. Ej: CanuelasAR, LondonGB."
     exit 1
@@ -273,8 +274,27 @@ New-Item -ItemType Directory -Path (Join-Path $DatosApp 'fondos') -Force | Out-N
 New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
 New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
 
-Copy-Item -Path (Join-Path $Origen 'Change-Wallpaper.ps1') -Destination (Join-Path $DatosApp 'bin\Change-Wallpaper.ps1') -Force
-Copy-Item -Path (Join-Path $Origen '..\VERSION') -Destination (Join-Path $DatosApp 'VERSION') -Force
+# El motor completo (lectura de configuración, consulta de clima y de
+# horarios del sol, y aplicación del fondo) está escrito en C# y se
+# compila acá con csc.exe — el compilador de C# de .NET Framework,
+# incluido de fábrica en todo Windows 10/11. Reemplaza a la versión
+# anterior en PowerShell: arranca en milisegundos y, al ser un binario
+# nativo, la Tarea Programada puede ejecutarlo directo sin que aparezca
+# ninguna ventana de consola (a diferencia de invocar powershell.exe, que
+# siempre crea una consola al arrancar, sin importar -WindowStyle Hidden).
+$engineCs = Join-Path $Origen 'engine\FieldHouseEngine.cs'
+$buildEngineScript = Join-Path $Origen 'engine\Build-Engine.ps1'
+$exePath = Join-Path $DatosApp 'bin\FieldHouseEngine.exe'
+
+try {
+    & $buildEngineScript -RutaCsharp $engineCs -RutaExeSalida $exePath | Out-Null
+} catch {
+    Write-Err "No se pudo compilar el motor (FieldHouseEngine.exe): $($_.Exception.Message)"
+    exit 1
+}
+Write-Success "Motor compilado: $exePath"
+
+Copy-Item -Path (Join-Path $Origen '..\VERSION') -Destination (Join-Path $DatosApp 'bin\VERSION') -Force
 Copy-Item -Path (Join-Path $Origen '..\fondos\*.jpg') -Destination (Join-Path $DatosApp 'fondos') -Force
 
 # Verificación: si la copia falló parcialmente (por ejemplo un .jpg
@@ -332,20 +352,8 @@ Write-Success "Configuración guardada en $ConfigFile"
 Write-Host ""
 Write-Info "4/4 - Configurando ejecución automática (Tareas Programadas)..."
 
-$scriptPath = Join-Path $DatosApp 'bin\Change-Wallpaper.ps1'
+$exePath = Join-Path $DatosApp 'bin\FieldHouseEngine.exe'
 
-# Se usa el mismo intérprete que corrió este instalador (powershell.exe o
-# pwsh.exe, según con cuál se haya invocado), para que la tarea programada
-# quede consistente con el entorno en el que el usuario ya probó que
-# funciona. Si por algún motivo no se puede resolver desde el proceso
-# actual, se cae a powershell.exe (Windows PowerShell 5.1), que viene de
-# fábrica en Windows 10 y 11.
-try {
-    $pwshExe = (Get-Process -Id $PID -ErrorAction Stop).Path
-} catch {
-    $pwshExe = 'powershell.exe'
-}
-if (-not $pwshExe) { $pwshExe = 'powershell.exe' }
 # Usar la identidad completa de la sesión evita que Register-ScheduledTask
 # intente registrar una tarea con el principal predeterminado (SYSTEM), algo
 # que normalmente requiere elevación aunque la tarea solo sea del usuario.
@@ -353,8 +361,10 @@ $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive
 
 # --- Tarea horaria ---
-$actionHoraria = New-ScheduledTaskAction -Execute $pwshExe `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+# La Tarea Programada ejecuta FieldHouseEngine.exe directo (sin PowerShell
+# de por medio): es un binario nativo, compilado como /target:winexe, así
+# que nunca crea ninguna ventana de consola visible al arrancar.
+$actionHoraria = New-ScheduledTaskAction -Execute $exePath
 # RepetitionDuration: usar un valor grande pero dentro de límites razonables
 # Evita valores excesivos que el Programador de tareas puede rechazar (p.ej. P36500D)
 $duracionRepeticion = New-TimeSpan -Days 365
@@ -377,7 +387,7 @@ try {
 } catch {
     Write-Warn "Register-ScheduledTask falló: $($_.Exception.Message)"
     # Intentar fallback con schtasks.exe (más compatible en entornos restringidos)
-    $schtasksCmd = @('/Create', '/TN', $TaskName, '/TR', "$pwshExe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`"", '/SC', 'HOURLY', '/MO', '1', '/F')
+    $schtasksCmd = @('/Create', '/TN', $TaskName, '/TR', "`"$exePath`"", '/SC', 'HOURLY', '/MO', '1', '/F')
     if ($DryRunInstall) {
         Write-Info "Simulación fallback: schtasks.exe $($schtasksCmd -join ' ')"
     } else {
@@ -396,8 +406,7 @@ try {
 }
 
 # --- Tarea de inicio de sesión (con -Reboot) ---
-$actionLogin = New-ScheduledTaskAction -Execute $pwshExe `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`" -Reboot"
+$actionLogin = New-ScheduledTaskAction -Execute $exePath -Argument '--reboot'
 $triggerLogin = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $settingsLogin = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 
@@ -416,7 +425,7 @@ try {
     }
 } catch {
     Write-Warn "Register-ScheduledTask (login) falló: $($_.Exception.Message)"
-    $schtasksCmdLogin = @('/Create', '/TN', $TaskNameLogin, '/TR', "$pwshExe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`" -Reboot", '/SC', 'ONLOGON', '/RU', $currentUser, '/RL', 'LIMITED', '/IT', '/F')
+    $schtasksCmdLogin = @('/Create', '/TN', $TaskNameLogin, '/TR', "`"$exePath`" --reboot", '/SC', 'ONLOGON', '/RU', $currentUser, '/RL', 'LIMITED', '/IT', '/F')
     if ($DryRunInstall) {
         Write-Info "Simulación fallback: schtasks.exe $($schtasksCmdLogin -join ' ')"
     } else {
@@ -445,7 +454,7 @@ if ($tareaHorariaCreada -and $tareaLoginCreada) {
 # vez de esperar a la próxima hora en punto.
 Write-Info "Aplicando el primer fondo..."
 try {
-    & $scriptPath
+    & $exePath
     Write-Success "Fondo aplicado correctamente."
 } catch {
     Write-Warn "La primera ejecución falló ($($_.Exception.Message)). Revisá el log en $(Join-Path $StateDir 'log.txt')"
@@ -486,13 +495,16 @@ Write-Host "  Ver el estado de las tareas:"
 Write-Host "    Get-ScheduledTask -TaskName '$TaskName', '$TaskNameLogin'"
 Write-Host ""
 Write-Host "  Ejecutar manualmente ahora:"
-Write-Host "    & `"$scriptPath`""
+Write-Host "    & `"$exePath`""
 Write-Host ""
 Write-Host "  Simular sin tocar nada (qué fondo se aplicaría):"
-Write-Host "    & `"$scriptPath`" -DryRun"
+Write-Host "    & `"$exePath`" --dry-run"
 Write-Host ""
 Write-Host "  Ver la ayuda completa:"
-Write-Host "    & `"$scriptPath`" -Help"
+Write-Host "    & `"$exePath`" --help"
+Write-Host ""
+Write-Host "  Reconfigurar (ciudad, modo de horarios, franjas horarias):"
+Write-Host "    & `"$exePath`" --config"
 Write-Host ""
 Write-Host "  Ver el log:"
 Write-Host "    Get-Content `"$(Join-Path $StateDir 'log.txt')`" -Tail 20 -Wait"

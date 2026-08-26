@@ -18,7 +18,7 @@ Automatically changes your desktop wallpaper — on **XFCE** (Linux Mint XFCE, X
 - 🔁 **Automatic execution** (systemd timer on Linux, Scheduled Tasks on Windows), hourly + login correction, no manual setup.
 - 🖥️ **Multi-monitor**: updates the wallpaper on every monitor and workspace.
 - 🛡️ **Robust by design**: validates configuration and dependencies at startup, fails with clear messages instead of silently, uses secure temp files with automatic cleanup, rate-limits weather queries with a cache, and rotates the log so it never grows unbounded.
-- 🔎 **Diagnostics**: simulation mode (`--dry-run` / `-DryRun`) shows which wallpaper would be applied without touching anything, great for testing or reporting issues.
+- 🔎 **Diagnostics**: simulation mode (`--dry-run`) shows which wallpaper would be applied without touching anything, great for testing or reporting issues.
 
 ## Installation (Linux)
 
@@ -86,25 +86,25 @@ It will ask whether you want to keep your configuration and logs in case you rei
 
 ## Installation (Windows)
 
-Requirements: Windows 10 or Windows 11, with PowerShell (bundled with both — nothing extra to install). No administrator privileges required: everything installs into your user folder.
+Requirements: Windows 10 or Windows 11. No administrator privileges required: everything installs into your user folder. The installer itself runs with PowerShell (bundled with both), but the program that ends up installed and running all the time is a **native C# executable** (`FieldHouseEngine.exe`), not a PowerShell script — it starts in milliseconds and the Scheduled Task runs it without opening any console window.
 
 ```powershell
 git clone https://github.com/agustincomolli/field-house.git
 cd field-house\windows
-.\Install.ps1
+.\Install.cmd
 ```
 
-> If PowerShell blocks the script with an execution-policy message, run this instead: `powershell -ExecutionPolicy Bypass -File .\Install.ps1`. The installer doesn't change your global execution policy — the Scheduled Task it creates invokes the engine with the bypass scoped to that single run, so you don't need to touch `Set-ExecutionPolicy` permanently.
+> `Install.cmd` is a shortcut that runs `Install.ps1` with PowerShell's execution-policy bypass already handled — nothing extra to type, no need to touch your PowerShell settings. You can also just double-click it from File Explorer. If you'd rather run the `.ps1` directly (e.g. to pass `-NoBackup` or other flags), use: `powershell -ExecutionPolicy Bypass -File .\Install.ps1`. The same block (and the same fix) applies later when uninstalling.
 
 The installer will:
 
 1. Automatically detect your location (by IP) and ask you to confirm it, or let you type it manually if you prefer.
 2. Ask whether you want **fixed** times or **automatic** times based on the actual sunrise/sunset in your city (same options as on Linux).
-3. Copy the program and images to `%LOCALAPPDATA%\FieldHouse`.
+3. Compile the engine (`FieldHouseEngine.exe`) with `csc.exe` — the C# compiler bundled with Windows 10/11, nothing extra to install — and copy the program and images to `%LOCALAPPDATA%\FieldHouse`.
 4. Generate your configuration at `%APPDATA%\FieldHouse\config.json`.
 5. Register two Scheduled Tasks: one that runs hourly, and one that runs at login.
 
-> ℹ️ **Reinstalling backs up the previous install by default.** Same as on Linux: if you already have a previous install, `Install.ps1` detects it and, after confirming, moves the program, customized images, and configuration to a `.bak.TIMESTAMP` copy before installing the new one. Use `.\Install.ps1 -NoBackup` if you'd rather delete it directly without a backup.
+> ℹ️ **Reinstalling backs up the previous install by default.** Same as on Linux: if you already have a previous install, `Install.ps1` detects it and, after confirming, moves the program, customized images, and configuration to a `.bak.TIMESTAMP` copy before installing the new one. Use `.\Install.cmd -NoBackup` (or `powershell -ExecutionPolicy Bypass -File .\Install.ps1 -NoBackup`) if you'd rather delete it directly without a backup.
 
 > The Windows version has no crossfade transition between wallpapers (that feature depends on ImageMagick, which isn't installed on this platform): the wallpaper change is instant.
 
@@ -115,26 +115,31 @@ The installer will:
 Get-ScheduledTask -TaskName 'FieldHouseWallpaper', 'FieldHouseWallpaperLogin'
 
 # Force an update right now
-& "$env:LOCALAPPDATA\FieldHouse\bin\Change-Wallpaper.ps1"
+& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe"
 
 # Simulate without touching anything (which wallpaper would be applied)
-& "$env:LOCALAPPDATA\FieldHouse\bin\Change-Wallpaper.ps1" -DryRun
+& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --dry-run
 
 # Full help
-& "$env:LOCALAPPDATA\FieldHouse\bin\Change-Wallpaper.ps1" -Help
+& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --help
+
+# Reconfigure city, time mode, and time slots interactively
+& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --config
 
 # View the log
 Get-Content "$env:LOCALAPPDATA\FieldHouse\state\log.txt" -Tail 20 -Wait
 
-# Edit your city or the time-slot schedule
+# Edit your city or the time-slot schedule by hand (alternative to --config)
 notepad "$env:APPDATA\FieldHouse\config.json"
 ```
 
 ### Uninstalling (Windows)
 
 ```powershell
-.\Uninstall.ps1
+.\Uninstall.cmd
 ```
+
+> Same as with installation, `Uninstall.cmd` runs `Uninstall.ps1` without you having to deal with PowerShell's execution policy. You can double-click it or run it from a console.
 
 It will ask whether you want to keep your configuration in case you reinstall later.
 

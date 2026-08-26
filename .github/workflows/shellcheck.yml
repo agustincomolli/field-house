@@ -129,17 +129,19 @@ jobs:
         run: |
           Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
 
-      - name: Parseo AST (sintaxis) de los 3 scripts
+      - name: Parseo AST (sintaxis) de los scripts PowerShell
         shell: pwsh
         run: |
           # Detecta errores de sintaxis reales (paréntesis/llaves mal
           # cerrados, tipos inválidos, etc.), equivalente a `bash -n` para
-          # PowerShell. No ejecuta el código, solo lo parsea.
+          # PowerShell. No ejecuta el código, solo lo parsea. El motor en sí
+          # (FieldHouseEngine.cs) ya no es PowerShell, así que no entra acá;
+          # se valida compilándolo en el paso siguiente.
           $ErrorActionPreference = 'Stop'
           $archivos = @(
-            'windows\Change-Wallpaper.ps1',
             'windows\Install.ps1',
-            'windows\Uninstall.ps1'
+            'windows\Uninstall.ps1',
+            'windows\engine\Build-Engine.ps1'
           )
           $huboError = $false
           foreach ($archivo in $archivos) {
@@ -177,7 +179,30 @@ jobs:
           }
           Write-Host "OK: sin hallazgos de PSScriptAnalyzer (severidad Warning/Error)."
 
-      - name: Smoke test — modo fijo (-DryRun)
+      - name: Compilar el motor (FieldHouseEngine.exe)
+        shell: pwsh
+        run: |
+          # Mismo paso que ejecuta Install.ps1 durante una instalación real:
+          # csc.exe viene preinstalado en los runners windows-latest como
+          # parte de .NET Framework, así que no hace falta instalar nada
+          # adicional. Un error acá indica que FieldHouseEngine.cs no
+          # compila (sintaxis inválida, o uso accidental de una feature de
+          # C# más nueva que la que soporta csc.exe / C# 5).
+          #
+          # El .exe queda en la raíz del checkout (junto a VERSION, que ya
+          # está ahí), así que --version se ejercita con el valor real del
+          # proyecto sin necesidad de copiar nada.
+          $ErrorActionPreference = 'Stop'
+          .\windows\engine\Build-Engine.ps1 `
+            -RutaCsharp .\windows\engine\FieldHouseEngine.cs `
+            -RutaExeSalida .\FieldHouseEngine.exe
+          if (-not (Test-Path .\FieldHouseEngine.exe)) {
+            Write-Host "::error::Build-Engine.ps1 no generó FieldHouseEngine.exe"
+            exit 1
+          }
+          Write-Host "OK: FieldHouseEngine.exe compilado."
+
+      - name: Smoke test — modo fijo (--dry-run)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -198,24 +223,24 @@ jobs:
           }
           $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
 
-          & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -DryRun
+          & .\FieldHouseEngine.exe --dry-run
           $codigo = $LASTEXITCODE
           if ($codigo -ne 0) {
-            Write-Host "::error::Change-Wallpaper.ps1 -DryRun (modo fijo) devolvió exit code $codigo"
+            Write-Host "::error::FieldHouseEngine.exe --dry-run (modo fijo) devolvió exit code $codigo"
             exit 1
           }
 
-          & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -Version
+          & .\FieldHouseEngine.exe --version
           $codigo = $LASTEXITCODE
           if ($codigo -ne 0) {
-            Write-Host "::error::Change-Wallpaper.ps1 -Version devolvió exit code $codigo"
+            Write-Host "::error::FieldHouseEngine.exe --version devolvió exit code $codigo"
             exit 1
           }
 
-          & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -Help | Out-Null
+          & .\FieldHouseEngine.exe --help | Out-Null
           $codigo = $LASTEXITCODE
           if ($codigo -ne 0) {
-            Write-Host "::error::Change-Wallpaper.ps1 -Help devolvió exit code $codigo"
+            Write-Host "::error::FieldHouseEngine.exe --help devolvió exit code $codigo"
             exit 1
           }
 
@@ -223,9 +248,10 @@ jobs:
         shell: pwsh
         run: |
           # Igual que el equivalente bash del job de Linux: ejercita el
-          # camino real de Get-HorariosSol (parseo del JSON j1 de wttr.in,
-          # conversión de horas 12h y cálculo de mediodía/noche), con
-          # conectividad real de los runners de GitHub Actions.
+          # camino real de ObtenerHorariosSol (parseo del JSON j1 de
+          # wttr.in vía MiniJson, conversión de horas 12h y cálculo de
+          # mediodía/noche), con conectividad real de los runners de
+          # GitHub Actions.
           $ErrorActionPreference = 'Stop'
           $config = [PSCustomObject]@{
             CarpetaFondos          = "$env:GITHUB_WORKSPACE\fondos"
@@ -243,10 +269,10 @@ jobs:
           }
           $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
 
-          $salida = & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -DryRun
+          $salida = & .\FieldHouseEngine.exe --dry-run
           $salida | Write-Host
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::Change-Wallpaper.ps1 -DryRun (modo auto) devolvió exit code $LASTEXITCODE"
+            Write-Host "::error::FieldHouseEngine.exe --dry-run (modo auto) devolvió exit code $LASTEXITCODE"
             exit 1
           }
           $textoCompleto = $salida -join "`n"
@@ -260,7 +286,7 @@ jobs:
       - name: Smoke test — configuración inválida debe fallar (Ciudad con espacio)
         shell: pwsh
         run: |
-          # Confirma que Test-Configuracion realmente detiene la ejecución
+          # Confirma que ValidarConfiguracion realmente detiene la ejecución
           # (exit code != 0) ante un valor inválido, igual que el equivalente
           # bash de este mismo chequeo en el job de Linux.
           $ErrorActionPreference = 'Stop'
@@ -280,11 +306,11 @@ jobs:
           }
           $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
 
-          & pwsh -NoProfile -File windows\Change-Wallpaper.ps1 -DryRun
+          & .\FieldHouseEngine.exe --dry-run
           $codigo = $LASTEXITCODE
           if ($codigo -eq 0) {
-            Write-Host "::error::el script debería haber fallado con Ciudad inválida ('Buenos Aires') y no lo hizo"
+            Write-Host "::error::el motor debería haber fallado con Ciudad inválida ('Buenos Aires') y no lo hizo"
             exit 1
           }
-          Write-Host "OK: el script rechazó correctamente la ciudad inválida (exit code $codigo)."
+          Write-Host "OK: el motor rechazó correctamente la ciudad inválida (exit code $codigo)."
           exit 0

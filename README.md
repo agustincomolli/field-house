@@ -18,7 +18,7 @@ Cambia automáticamente el fondo de pantalla — de **XFCE** (Linux Mint XFCE, X
 - 🔁 **Ejecución automática** (timer de systemd en Linux, Tareas Programadas en Windows) por hora + corrección al iniciar sesión, sin configurarlo a mano.
 - 🖥️ **Multi-monitor**: actualiza el fondo en todos los monitores y espacios de trabajo.
 - 🛡️ **Robusto por diseño**: valida la configuración y las dependencias al arrancar, falla con mensajes claros en vez de hacerlo en silencio, usa temporales seguros con limpieza automática, limita la consulta de clima con caché, y rota el log para que nunca crezca sin control.
-- 🔎 **Diagnóstico**: el modo simulación (`--dry-run` / `-DryRun`) muestra qué fondo se aplicaría sin tocar nada, ideal para probar o reportar problemas.
+- 🔎 **Diagnóstico**: el modo simulación (`--dry-run`) muestra qué fondo se aplicaría sin tocar nada, ideal para probar o reportar problemas.
 
 ## Instalación (Linux)
 
@@ -86,25 +86,25 @@ Te va a preguntar si querés conservar tu configuración y logs por si reinstal�
 
 ## Instalación (Windows)
 
-Requisitos: Windows 10 o Windows 11, con PowerShell (viene de fábrica en ambas — no hace falta instalar nada extra). No requiere permisos de administrador: todo se instala en tu carpeta de usuario.
+Requisitos: Windows 10 o Windows 11. No requiere permisos de administrador: todo se instala en tu carpeta de usuario. El instalador se corre con PowerShell (viene de fábrica), pero el programa que queda instalado y corriendo todo el tiempo es un **ejecutable nativo en C#** (`FieldHouseEngine.exe`), no un script de PowerShell — arranca en milisegundos y la Tarea Programada lo ejecuta sin abrir ninguna ventana de consola.
 
 ```powershell
 git clone https://github.com/agustincomolli/field-house.git
 cd field-house\windows
-.\Install.ps1
+.\Install.cmd
 ```
 
-> Si PowerShell bloquea el script con un mensaje sobre la política de ejecución, corré en su lugar: `powershell -ExecutionPolicy Bypass -File .\Install.ps1`. El instalador no cambia tu política de ejecución global — la Tarea Programada que crea invoca el motor con el bypass acotado a esa ejecución puntual, así que no necesitás tocar `Set-ExecutionPolicy` de forma permanente.
+> `Install.cmd` es un atajo que corre `Install.ps1` con el bypass de política de ejecución de PowerShell ya resuelto — no hace falta escribir nada extra ni tocar tu configuración de PowerShell. También podés hacerle doble clic desde el Explorador de archivos. Si preferís correr el `.ps1` directo (por ejemplo para pasarle `-NoBackup` u otros flags), usá: `powershell -ExecutionPolicy Bypass -File .\Install.ps1`. El mismo bloqueo (y la misma solución) aplica más adelante al desinstalar.
 
 El instalador va a:
 
 1. Detectar tu ubicación automáticamente (por IP) y pedirte que la confirmes, o que la ingreses a mano si preferís.
 2. Preguntarte si querés horarios **fijos** o **automáticos** según la salida y puesta real del sol en tu ciudad (mismas opciones que en Linux).
-3. Copiar el programa y las imágenes a `%LOCALAPPDATA%\FieldHouse`.
+3. Compilar el motor (`FieldHouseEngine.exe`) con `csc.exe` — el compilador de C# incluido de fábrica en Windows 10/11, sin instalar nada adicional — y copiar el programa y las imágenes a `%LOCALAPPDATA%\FieldHouse`.
 4. Generar tu configuración en `%APPDATA%\FieldHouse\config.json`.
 5. Registrar dos Tareas Programadas: una que corre cada hora, y otra que corre al iniciar sesión.
 
-> ℹ️ **Reinstalar resguarda lo anterior por defecto.** Igual que en Linux: si ya tenés una instalación previa, `Install.ps1` la detecta y, tras confirmar, mueve el programa, las imágenes personalizadas y la configuración a una copia `.bak.FECHAHORA` antes de instalar la nueva. Usá `.\Install.ps1 -NoBackup` si preferís borrarla directamente sin resguardo.
+> ℹ️ **Reinstalar resguarda lo anterior por defecto.** Igual que en Linux: si ya tenés una instalación previa, `Install.ps1` la detecta y, tras confirmar, mueve el programa, las imágenes personalizadas y la configuración a una copia `.bak.FECHAHORA` antes de instalar la nueva. Usá `.\Install.cmd -NoBackup` (o `powershell -ExecutionPolicy Bypass -File .\Install.ps1 -NoBackup`) si preferís borrarla directamente sin resguardo.
 
 > La versión Windows no tiene transición de fundido entre fondos (esa característica depende de ImageMagick, que no se instala en esta plataforma): el cambio de fondo es directo.
 
@@ -115,26 +115,31 @@ El instalador va a:
 Get-ScheduledTask -TaskName 'FieldHouseWallpaper', 'FieldHouseWallpaperLogin'
 
 # Forzar una actualización ahora mismo
-& "$env:LOCALAPPDATA\FieldHouse\bin\Change-Wallpaper.ps1"
+& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe"
 
 # Simular sin tocar nada (qué fondo se aplicaría ahora)
-& "$env:LOCALAPPDATA\FieldHouse\bin\Change-Wallpaper.ps1" -DryRun
+& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --dry-run
 
 # Ver la ayuda completa
-& "$env:LOCALAPPDATA\FieldHouse\bin\Change-Wallpaper.ps1" -Help
+& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --help
+
+# Reconfigurar ciudad, modo de horarios y franjas horarias, paso a paso
+& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --config
 
 # Ver el log
 Get-Content "$env:LOCALAPPDATA\FieldHouse\state\log.txt" -Tail 20 -Wait
 
-# Editar tu ciudad o los horarios de las franjas
+# Editar tu ciudad o los horarios de las franjas a mano (alternativa a --config)
 notepad "$env:APPDATA\FieldHouse\config.json"
 ```
 
 ### Desinstalar (Windows)
 
 ```powershell
-.\Uninstall.ps1
+.\Uninstall.cmd
 ```
+
+> Igual que con la instalación, `Uninstall.cmd` corre `Uninstall.ps1` sin que tengas que lidiar con la política de ejecución de PowerShell. Podés hacerle doble clic o correrlo desde una consola.
 
 Te va a preguntar si querés conservar tu configuración por si reinstalás más adelante.
 
