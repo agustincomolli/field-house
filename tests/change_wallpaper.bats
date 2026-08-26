@@ -49,6 +49,11 @@ setup() {
     [ "$result" -eq 390 ]
 }
 
+@test "hora_a_minutos: convierte horas 08 y 09 sin interpretarlas como octales" {
+    [ "$(hora_a_minutos '08:05')" -eq 485 ]
+    [ "$(hora_a_minutos '09:07')" -eq 547 ]
+}
+
 @test "hora_a_minutos: convierte mediodía" {
     result="$(hora_a_minutos '12:00')"
     [ "$result" -eq 720 ]

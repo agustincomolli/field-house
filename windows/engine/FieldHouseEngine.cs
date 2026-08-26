@@ -457,7 +457,8 @@ namespace FieldHouse
 
         private static int Main(string[] args)
         {
-            Console.OutputEncoding = new UTF8Encoding(false);
+            try { Console.OutputEncoding = new UTF8Encoding(false); }
+            catch (IOException) { }
             string versionPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "VERSION");
             if (File.Exists(versionPath))
             {

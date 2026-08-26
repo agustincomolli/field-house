@@ -662,7 +662,7 @@ fi
 # 2) Determinar la franja horaria actual (horas fijas)
 # ----------------------------------------------------------------------------
 
-AHORA_MIN=$(( $(date +%H)*60 + $(date +%M) ))
+AHORA_MIN=$(hora_a_minutos "$(date +%H:%M)")
 
 # Horarios de las franjas. Por defecto (MODO_HORARIOS=fijo) son fijos, desde
 # config.conf. En modo auto se calculan según la salida/puesta real del sol
