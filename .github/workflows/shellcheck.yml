@@ -223,22 +223,22 @@ jobs:
           }
           $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
 
-          & .\FieldHouseEngine.exe --dry-run
-          $codigo = $LASTEXITCODE
+          $proceso = Start-Process -FilePath (Resolve-Path .\FieldHouseEngine.exe) -ArgumentList '--dry-run' -Wait -PassThru
+          $codigo = $proceso.ExitCode
           if ($codigo -ne 0) {
             Write-Host "::error::FieldHouseEngine.exe --dry-run (modo fijo) devolvió exit code $codigo"
             exit 1
           }
 
-          & .\FieldHouseEngine.exe --version
-          $codigo = $LASTEXITCODE
+          $proceso = Start-Process -FilePath (Resolve-Path .\FieldHouseEngine.exe) -ArgumentList '--version' -Wait -PassThru
+          $codigo = $proceso.ExitCode
           if ($codigo -ne 0) {
             Write-Host "::error::FieldHouseEngine.exe --version devolvió exit code $codigo"
             exit 1
           }
 
-          & .\FieldHouseEngine.exe --help | Out-Null
-          $codigo = $LASTEXITCODE
+          $proceso = Start-Process -FilePath (Resolve-Path .\FieldHouseEngine.exe) -ArgumentList '--help' -Wait -PassThru
+          $codigo = $proceso.ExitCode
           if ($codigo -ne 0) {
             Write-Host "::error::FieldHouseEngine.exe --help devolvió exit code $codigo"
             exit 1
@@ -269,10 +269,13 @@ jobs:
           }
           $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
 
-          $salida = & .\FieldHouseEngine.exe --dry-run
+          $salidaPath = Join-Path $env:TEMP 'field-house-smoke-auto.txt'
+          $proceso = Start-Process -FilePath (Resolve-Path .\FieldHouseEngine.exe) -ArgumentList '--dry-run' -RedirectStandardOutput $salidaPath -Wait -PassThru
+          $salida = Get-Content -Path $salidaPath
+          Remove-Item $salidaPath -Force
           $salida | Write-Host
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::FieldHouseEngine.exe --dry-run (modo auto) devolvió exit code $LASTEXITCODE"
+          if ($proceso.ExitCode -ne 0) {
+            Write-Host "::error::FieldHouseEngine.exe --dry-run (modo auto) devolvió exit code $($proceso.ExitCode)"
             exit 1
           }
           $textoCompleto = $salida -join "`n"
@@ -306,8 +309,8 @@ jobs:
           }
           $config | ConvertTo-Json | Set-Content -Path "$env:APPDATA\FieldHouse\config.json" -Encoding UTF8
 
-          & .\FieldHouseEngine.exe --dry-run
-          $codigo = $LASTEXITCODE
+          $proceso = Start-Process -FilePath (Resolve-Path .\FieldHouseEngine.exe) -ArgumentList '--dry-run' -Wait -PassThru
+          $codigo = $proceso.ExitCode
           if ($codigo -eq 0) {
             Write-Host "::error::el motor debería haber fallado con Ciudad inválida ('Buenos Aires') y no lo hizo"
             exit 1
