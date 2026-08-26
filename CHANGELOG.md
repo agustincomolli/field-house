@@ -4,6 +4,13 @@ Todas las versiones notables de este proyecto se documentan acá.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.1.0/), y las versiones siguen [SemVer](https://semver.org/lang/es/) (MAJOR.MINOR.PATCH).
 
+## [1.3.4](https://github.com/agustincomolli/field-house/compare/v1.3.3...v1.3.4) (2026-08-26)
+
+
+### Bug Fixes
+
+* new windows project with c# ([d2a8f59](https://github.com/agustincomolli/field-house/commit/d2a8f59079d1ba217d0e43cffde67ff9710df416))
+
 ## [1.3.2](https://github.com/agustincomolli/field-house/compare/v1.3.1...v1.3.2) (2026-08-24)
 
 
