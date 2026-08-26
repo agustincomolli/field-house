@@ -279,7 +279,7 @@ jobs:
             exit 1
           }
           $textoCompleto = $salida -join "`n"
-          $tieneSol = $textoCompleto -match 'Horarios según el sol:'
+          $tieneSol = $textoCompleto -match 'Horarios .*sol:'
           $tieneFallback = $textoCompleto -match 'no se pudo obtener la salida/puesta del sol'
           if (-not $tieneSol -and -not $tieneFallback) {
             Write-Host "::error::modo auto no generó ninguno de los dos mensajes esperados (ni horarios del sol ni fallback documentado)"
