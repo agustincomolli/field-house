@@ -4,6 +4,15 @@ Todas las versiones notables de este proyecto se documentan acá.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.1.0/), y las versiones siguen [SemVer](https://semver.org/lang/es/) (MAJOR.MINOR.PATCH).
 
+## [1.3.6](https://github.com/agustincomolli/field-house/compare/v1.3.5...v1.3.6) (2026-09-01)
+
+
+### Bug Fixes
+
+* corregir conversión de horas en change_wallpaper.sh y manejar excepciones en la codificación UTF-8 en FieldHouseEngine ([09885b5](https://github.com/agustincomolli/field-house/commit/09885b5cc355e0e7b2dc90868023f1856c28b925))
+* mejorar manejo de procesos en shellcheck y establecer codificación UTF-8 en FieldHouseEngine ([9c5c7dd](https://github.com/agustincomolli/field-house/commit/9c5c7dd9dd193cab5b831331a2e4aeded50cce72))
+* shellcheck.yml ([17c4368](https://github.com/agustincomolli/field-house/commit/17c43684905af3bb86806664457981d3faa41477))
+
 ## [1.3.5](https://github.com/agustincomolli/field-house/compare/v1.3.4...v1.3.5) (2026-08-26)
 
 
