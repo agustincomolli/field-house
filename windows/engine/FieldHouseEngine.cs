@@ -42,26 +42,29 @@
 //   FieldHouseEngine.exe --reboot       Ejecución de inicio de sesión:
 //                                         espera EsperaInicialSegundos y,
 //                                         si la red no está lista,
-//                                         reintenta el clima hasta
-//                                         ReintentosClimaInicial veces cada
-//                                         EsperaReintentoClima segundos.
+//                                         reintenta la ubicación y el
+//                                         clima hasta ReintentosClimaInicial
+//                                         veces cada EsperaReintentoClima
+//                                         segundos.
 //   FieldHouseEngine.exe --dry-run      Simula la ejecución: muestra qué
 //                                         fondo se aplicaría sin tocar el
 //                                         fondo real, sin escribir logs ni
 //                                         estado, y sin esperas. Se puede
 //                                         combinar con --reboot.
 //   FieldHouseEngine.exe --config       Modo interactivo por consola para
-//                                         reconfigurar ciudad, modo de
-//                                         horarios y franjas horarias.
+//                                         reconfigurar modo de horarios y
+//                                         franjas horarias.
 //                                         Reescribe config.json.
 //   FieldHouseEngine.exe --version      Muestra la versión del programa.
 //   FieldHouseEngine.exe --help         Muestra esta ayuda.
 //
 // No tiene dependencias externas más allá de .NET Framework (ya instalado
-// de fábrica en Windows 10/11): usa HttpWebRequest para consultar wttr.in
-// y la API Win32 SystemParametersInfo (P/Invoke) para aplicar el fondo. No
-// hay transición de fundido en esta versión (a diferencia de la versión
-// Linux con ImageMagick): Windows aplica el cambio de forma directa.
+// de fábrica en Windows 10/11): usa HttpWebRequest para consultar las APIs
+// de MET Norway (api.met.no, clima y horario solar) e ip-api.com (geolo-
+// calización automática por IP), y la API Win32 SystemParametersInfo
+// (P/Invoke) para aplicar el fondo. No hay transición de fundido en esta
+// versión (a diferencia de la versión Linux con ImageMagick): Windows
+// aplica el cambio de forma directa.
 // ============================================================================
 
 using System;
@@ -82,10 +85,11 @@ namespace FieldHouse
     // ------------------------------------------------------------------
     // Parser y escritor de JSON muy simple, suficiente para lo que este
     // programa necesita: objetos planos de string/número/bool y arrays de
-    // objetos (para leer la respuesta de wttr.in). No pretende ser un
-    // parser JSON de propósito general; no maneja unicode escapado más
-    // allá de lo básico ni números en notación científica, porque config
-    // .json y las respuestas de wttr.in no los usan.
+    // objetos (para leer las respuestas de las APIs de MET Norway e
+    // ip-api.com). No pretende ser un parser JSON de propósito general,
+    // pero sí soporta lo que esas respuestas pueden traer: números con
+    // decimales, negativos, notación científica, y strings con unicode
+    // escapado (\uXXXX).
 
     internal enum JsonTipo { Objeto, Arreglo, Texto, Numero, Booleano, Nulo }
 
@@ -117,6 +121,11 @@ namespace FieldHouse
         public long ComoEntero(long porDefecto)
         {
             return (Tipo == JsonTipo.Numero) ? (long)Numero : porDefecto;
+        }
+
+        public double ComoDecimal(double porDefecto)
+        {
+            return (Tipo == JsonTipo.Numero) ? Numero : porDefecto;
         }
     }
 
@@ -293,7 +302,7 @@ namespace FieldHouse
     }
 
     /// <summary>
-    /// Configuración editable por el usuario (ciudad, franjas horarias,
+    /// Configuración editable por el usuario (franjas horarias, transición,
     /// etc). Vive en config.json, separada del binario para que el usuario
     /// no tenga que recompilar nada si quiere ajustar un valor a mano. Los
     /// nombres de las propiedades siguen usando el mismo formato en
@@ -303,7 +312,6 @@ namespace FieldHouse
     internal sealed class FieldHouseConfig
     {
         public string CarpetaFondos = "";
-        public string Ciudad = "";
         public string ModoHorarios = "fijo";
         public string HoraInicioAmanecer = "06:00";
         public string HoraInicioMediodia = "10:00";
@@ -315,13 +323,24 @@ namespace FieldHouse
         public int TtlCacheClima = 600;
         public long MaxLogBytes = 1048576;
 
+        /// <summary>
+        /// Claves numéricas que vinieron explícitas en el config.json
+        /// leído (independientemente de su valor). Necesario porque un
+        /// campo en 0 es un valor legítimo para varias de estas claves
+        /// (por ejemplo TtlCacheClima: 0 para desactivar la caché de
+        /// clima), así que FusionarConDefaults no puede usar "> 0" como
+        /// señal de "¿está seteado?": eso pisaría un 0 explícito con el
+        /// valor por defecto. Queda vacío si el objeto no vino de JSON
+        /// (instancia "en blanco" creada a mano).
+        /// </summary>
+        public HashSet<string> ClavesNumericasPresentes = new HashSet<string>();
+
         public static FieldHouseConfig DesdeJson(JsonValor raiz)
         {
             var c = new FieldHouseConfig();
             if (raiz == null || raiz.Tipo != JsonTipo.Objeto) return c;
 
             c.CarpetaFondos = ObtenerTexto(raiz, "CarpetaFondos", c.CarpetaFondos);
-            c.Ciudad = ObtenerTexto(raiz, "Ciudad", c.Ciudad);
             c.ModoHorarios = ObtenerTexto(raiz, "ModoHorarios", c.ModoHorarios);
             c.HoraInicioAmanecer = ObtenerTexto(raiz, "HoraInicioAmanecer", c.HoraInicioAmanecer);
             c.HoraInicioMediodia = ObtenerTexto(raiz, "HoraInicioMediodia", c.HoraInicioMediodia);
@@ -332,6 +351,12 @@ namespace FieldHouse
             c.EsperaReintentoClima = (int)ObtenerEntero(raiz, "EsperaReintentoClima", c.EsperaReintentoClima);
             c.TtlCacheClima = (int)ObtenerEntero(raiz, "TtlCacheClima", c.TtlCacheClima);
             c.MaxLogBytes = ObtenerEntero(raiz, "MaxLogBytes", c.MaxLogBytes);
+
+            foreach (string clave in new[] { "EsperaInicialSegundos", "ReintentosClimaInicial", "EsperaReintentoClima", "TtlCacheClima", "MaxLogBytes" })
+            {
+                if (raiz.Obtener(clave) != null) c.ClavesNumericasPresentes.Add(clave);
+            }
+
             return c;
         }
 
@@ -352,7 +377,6 @@ namespace FieldHouse
             var pares = new List<KeyValuePair<string, object>>
             {
                 new KeyValuePair<string, object>("CarpetaFondos", CarpetaFondos),
-                new KeyValuePair<string, object>("Ciudad", Ciudad),
                 new KeyValuePair<string, object>("ModoHorarios", ModoHorarios),
                 new KeyValuePair<string, object>("HoraInicioAmanecer", HoraInicioAmanecer),
                 new KeyValuePair<string, object>("HoraInicioMediodia", HoraInicioMediodia),
@@ -429,6 +453,43 @@ namespace FieldHouse
         }
     }
 
+    /// <summary>
+    /// A diferencia de CacheClima/CacheHorariosSol (que expiran por TTL o
+    /// por día), este caché NO tiene noción de expiración en sí mismo: es
+    /// responsabilidad de ObtenerUbicacion() decidir cuándo usarlo (ver el
+    /// comentario en esa función). Ts se guarda solo con fines informativos
+    /// (para diagnóstico/logs), no para decidir si el caché sigue siendo
+    /// válido.
+    /// </summary>
+    internal sealed class CacheUbicacion
+    {
+        public double Lat;
+        public double Lon;
+        public long Ts;
+
+        public string AJson()
+        {
+            var pares = new List<KeyValuePair<string, object>>
+            {
+                new KeyValuePair<string, object>("Lat", Lat),
+                new KeyValuePair<string, object>("Lon", Lon),
+                new KeyValuePair<string, object>("Ts", Ts),
+            };
+            return MiniJson.EscribirObjeto(pares);
+        }
+
+        public static CacheUbicacion DesdeJson(JsonValor raiz)
+        {
+            if (raiz == null || raiz.Tipo != JsonTipo.Objeto) return null;
+            var c = new CacheUbicacion();
+            JsonValor v;
+            v = raiz.Obtener("Lat"); c.Lat = (v != null) ? v.ComoDecimal(0) : 0;
+            v = raiz.Obtener("Lon"); c.Lon = (v != null) ? v.ComoDecimal(0) : 0;
+            v = raiz.Obtener("Ts"); c.Ts = (v != null) ? v.ComoEntero(0) : 0;
+            return c;
+        }
+    }
+
     internal static class Program
     {
         // ------------------------------------------------------------------
@@ -448,6 +509,7 @@ namespace FieldHouse
         private static readonly string LogFile = Path.Combine(StateDir, "log.txt");
         private static readonly string CacheClimaFile = Path.Combine(StateDir, "clima.cache.json");
         private static readonly string CacheHorariosFile = Path.Combine(StateDir, "horarios-sol.cache.json");
+        private static readonly string CacheUbicacionFile = Path.Combine(StateDir, "ubicacion.cache.json");
 
         private static bool DryRun;
         private static bool Reboot;
@@ -569,12 +631,6 @@ namespace FieldHouse
             // la ejecución: simplemente conserva el valor por defecto.
             Config = FusionarConDefaults(cargado);
 
-            if (string.IsNullOrEmpty(Config.Ciudad) || Config.Ciudad.Trim().Length == 0)
-            {
-                EscribirLog("ERROR: no hay ciudad configurada en " + ConfigFile + ". Corré Install.ps1 de nuevo, o FieldHouseEngine.exe --config.");
-                return 1;
-            }
-
             string errorConfig;
             if (!ValidarConfiguracion(Config, out errorConfig))
             {
@@ -606,6 +662,46 @@ namespace FieldHouse
             }
 
             // ---------------------------------------------------------------
+            // 0.3) Detectar la ubicación automáticamente (clima y sol)
+            // ---------------------------------------------------------------
+            // El usuario no configura ninguna ciudad ni coordenadas: en cada
+            // ejecución se detecta la ubicación a partir de la IP pública
+            // (ver ObtenerUbicacion). Al iniciar sesión (--reboot) la red
+            // puede estar todavía levantándose, así que se reintenta hasta
+            // ReintentosClimaInicial veces cada EsperaReintentoClima
+            // segundos — el mismo mecanismo de espera que ya existía para
+            // el clima, ahora también cubre la geolocalización porque ambas
+            // dependen de que la red esté lista. Si tras los reintentos no
+            // hay ubicación (ni siquiera una vieja en caché), ubicacion
+            // queda null y las secciones siguientes se degradan al
+            // comportamiento sin clima ni horarios por el sol.
+
+            CacheUbicacion ubicacion = null;
+            if (Reboot && !DryRun)
+            {
+                for (int intento = 1; intento <= Config.ReintentosClimaInicial; intento++)
+                {
+                    ubicacion = ObtenerUbicacion();
+                    if (ubicacion != null) break;
+
+                    if (intento < Config.ReintentosClimaInicial)
+                    {
+                        EscribirLog("Sin internet todavía para geolocalizar (intento " + intento + "/" + Config.ReintentosClimaInicial + "), se reintenta en " + Config.EsperaReintentoClima + "s.");
+                        Thread.Sleep(TimeSpan.FromSeconds(Config.EsperaReintentoClima));
+                    }
+                }
+            }
+            else
+            {
+                ubicacion = ObtenerUbicacion();
+            }
+
+            if (ubicacion == null)
+            {
+                EscribirLog("AVISO: no se pudo detectar la ubicación (sin internet y sin una ubicación previa en caché); se usan horarios fijos y no hay clima disponible en esta ejecución.");
+            }
+
+            // ---------------------------------------------------------------
             // 1) Verificar que todas las imágenes de fondo existen
             // ---------------------------------------------------------------
 
@@ -634,9 +730,9 @@ namespace FieldHouse
             int minAtardecer = ConvertirAMinutos(Config.HoraInicioAtardecer);
             int minNoche = ConvertirAMinutos(Config.HoraInicioNoche);
 
-            if (Config.ModoHorarios == "auto")
+            if (Config.ModoHorarios == "auto" && ubicacion != null)
             {
-                CacheHorariosSol horariosSol = ObtenerHorariosSol(Config.Ciudad);
+                CacheHorariosSol horariosSol = ObtenerHorariosSol(ubicacion.Lat, ubicacion.Lon);
                 if (horariosSol != null)
                 {
                     minAmanecer = horariosSol.Amanecer;
@@ -653,6 +749,10 @@ namespace FieldHouse
                 {
                     EscribirLog("AVISO: no se pudo obtener la salida/puesta del sol; se usan los horarios fijos de config.json.");
                 }
+            }
+            else if (Config.ModoHorarios == "auto")
+            {
+                EscribirLog("AVISO: ModoHorarios=auto pero no hay ubicación disponible; se usan los horarios fijos de config.json.");
             }
 
             // franjaClima indica qué fondo de nublado/lluvia corresponde
@@ -686,21 +786,28 @@ namespace FieldHouse
             //    todavía levantándose, así que si la consulta falla se
             //    aplica ya el fondo base de la franja y se reintenta cada
             //    EsperaReintentoClima segundos, hasta ReintentosClimaInicial
-            //    veces.
+            //    veces. (La ubicación en sí ya se resolvió en el paso 0.3;
+            //    acá solo se reintenta la consulta de clima con esa
+            //    ubicación.)
             // ---------------------------------------------------------------
 
             string clima = null;
-            if (Reboot && !DryRun)
+            if (ubicacion == null)
+            {
+                // sin ubicación disponible: clima queda null, se usa el
+                // fondo base.
+            }
+            else if (Reboot && !DryRun)
             {
                 int intento = 1;
                 while (intento <= Config.ReintentosClimaInicial)
                 {
-                    clima = ObtenerClima(Config.Ciudad, Config.TtlCacheClima);
+                    clima = ObtenerClima(ubicacion.Lat, ubicacion.Lon, Config.TtlCacheClima);
                     if (clima != null) break;
 
                     if (intento < Config.ReintentosClimaInicial)
                     {
-                        EscribirLog("Sin internet todavía (intento " + intento + "/" + Config.ReintentosClimaInicial + "), se aplica el fondo base y se reintenta en " + Config.EsperaReintentoClima + "s.");
+                        EscribirLog("Sin internet todavía para el clima (intento " + intento + "/" + Config.ReintentosClimaInicial + "), se aplica el fondo base y se reintenta en " + Config.EsperaReintentoClima + "s.");
                         AplicarFondo(fondo);
                         Thread.Sleep(TimeSpan.FromSeconds(Config.EsperaReintentoClima));
                     }
@@ -709,14 +816,14 @@ namespace FieldHouse
             }
             else
             {
-                clima = ObtenerClima(Config.Ciudad, Config.TtlCacheClima);
+                clima = ObtenerClima(ubicacion.Lat, ubicacion.Lon, Config.TtlCacheClima);
             }
 
             if (clima == null)
             {
                 EscribirLog("No se pudo consultar el clima, se usa el fondo base (" + momento + ")");
             }
-            else if (ClimaCoincide(clima, "overcast", "cloudy"))
+            else if (ClimaCoincide(clima, "cloudy", "fair", "partlycloudy"))
             {
                 if (franjaClima == "dia" || franjaClima == "atardecer")
                 {
@@ -727,7 +834,7 @@ namespace FieldHouse
                     fondo = fondoNubladoNoche; momento = "nublado de noche (" + clima + ")";
                 }
             }
-            else if (ClimaCoincide(clima, "rain", "drizzle", "shower", "thunder", "mist", "fog"))
+            else if (ClimaCoincide(clima, "rain", "sleet", "snow", "thunder", "fog"))
             {
                 if (franjaClima == "dia")
                 {
@@ -762,7 +869,8 @@ namespace FieldHouse
             Console.WriteLine("The Field House — Live Wallpaper v" + AppVersion + " (Windows)");
             Console.WriteLine();
             Console.WriteLine("Cambia el fondo de pantalla de Windows según la franja horaria (amanecer,");
-            Console.WriteLine("mediodía, atardecer, noche) y el clima actual (nublado/lluvia) de tu ciudad.");
+            Console.WriteLine("mediodía, atardecer, noche) y el clima actual (nublado/lluvia) de tu");
+            Console.WriteLine("ubicación, detectada automáticamente por IP.");
             Console.WriteLine();
             Console.WriteLine("Uso:");
             Console.WriteLine("  FieldHouseEngine.exe [opciones]");
@@ -770,17 +878,18 @@ namespace FieldHouse
             Console.WriteLine("Opciones:");
             Console.WriteLine("  (sin opciones)  Ejecución normal. La usa la tarea programada horaria.");
             Console.WriteLine("  --reboot        Ejecución de inicio de sesión: espera EsperaInicialSegundos");
-            Console.WriteLine("                  y, si la red no está lista, reintenta el clima hasta");
-            Console.WriteLine("                  ReintentosClimaInicial veces cada EsperaReintentoClima s.");
+            Console.WriteLine("                  y, si la red no está lista, reintenta la ubicación y el");
+            Console.WriteLine("                  clima hasta ReintentosClimaInicial veces cada");
+            Console.WriteLine("                  EsperaReintentoClima segundos.");
             Console.WriteLine("  --dry-run       Simula la ejecución: muestra qué fondo se aplicaría sin");
             Console.WriteLine("                  tocar el fondo real, sin escribir logs ni estado, y sin");
             Console.WriteLine("                  esperas. Se puede combinar con --reboot.");
-            Console.WriteLine("  --config        Modo interactivo por consola para reconfigurar ciudad,");
-            Console.WriteLine("                  modo de horarios y franjas horarias. Reescribe config.json.");
+            Console.WriteLine("  --config        Modo interactivo por consola para reconfigurar el modo");
+            Console.WriteLine("                  de horarios y franjas horarias. Reescribe config.json.");
             Console.WriteLine("  --version       Muestra la versión del programa.");
             Console.WriteLine("  --help          Muestra esta ayuda.");
             Console.WriteLine();
-            Console.WriteLine("La configuración (ciudad, horarios) se lee de:");
+            Console.WriteLine("La configuración (horarios) se lee de:");
             Console.WriteLine("  " + ConfigFile);
             Console.WriteLine();
             Console.WriteLine("Los logs se escriben en:");
@@ -830,12 +939,6 @@ namespace FieldHouse
                 Console.WriteLine();
             }
 
-            string ciudad = PreguntarTexto(
-                "Ciudad para consultar el clima (sin espacios ni tildes, ej. CanuelasAR) [" + actual.Ciudad + "]: ",
-                actual.Ciudad,
-                valor => Regex.IsMatch(valor, "^[A-Za-z0-9.,_-]+$"),
-                "Solo letras y números (sin espacios ni tildes), opcionalmente . , _ o -. Ej: CanuelasAR, LondonGB.");
-
             string modoHorarios = PreguntarTexto(
                 "Modo de horarios: 'fijo' o 'auto' [" + actual.ModoHorarios + "]: ",
                 actual.ModoHorarios,
@@ -847,7 +950,6 @@ namespace FieldHouse
             string horaAtardecer = PreguntarHora("Hora de inicio de atardecer", actual.HoraInicioAtardecer);
             string horaNoche = PreguntarHora("Hora de inicio de noche", actual.HoraInicioNoche);
 
-            actual.Ciudad = ciudad;
             actual.ModoHorarios = modoHorarios;
             actual.HoraInicioAmanecer = horaAmanecer;
             actual.HoraInicioMediodia = horaMediodia;
@@ -968,29 +1070,6 @@ namespace FieldHouse
         }
 
         /// <summary>
-        /// Convierte una hora en formato 12 horas (como la manda wttr.in en
-        /// su formato j1: "07:32 AM", "06:25 PM") a minutos desde
-        /// medianoche.
-        /// </summary>
-        private static int ConvertirAMinutos12h(string hora12)
-        {
-            Match m = Regex.Match(hora12, @"^(\d{1,2}):(\d{2}) (AM|PM)$");
-            if (!m.Success)
-            {
-                throw new FormatException("Formato de hora 12h inesperado: '" + hora12 + "'");
-            }
-
-            int h = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
-            int min = int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture);
-            string ampm = m.Groups[3].Value;
-
-            if (ampm == "PM" && h != 12) h += 12;
-            if (ampm == "AM" && h == 12) h = 0;
-
-            return (h * 60) + min;
-        }
-
-        /// <summary>
         /// Convierte minutos desde medianoche a formato HH:MM (solo para
         /// mensajes de log). Normaliza al rango [0, 1440) antes de
         /// formatear: minNoche puede superar 1440 cuando el atardecer real
@@ -1026,17 +1105,24 @@ namespace FieldHouse
             if (cargado == null) return resultado;
 
             if (!string.IsNullOrEmpty(cargado.CarpetaFondos)) resultado.CarpetaFondos = cargado.CarpetaFondos;
-            if (!string.IsNullOrEmpty(cargado.Ciudad)) resultado.Ciudad = cargado.Ciudad;
             if (!string.IsNullOrEmpty(cargado.ModoHorarios)) resultado.ModoHorarios = cargado.ModoHorarios;
             if (!string.IsNullOrEmpty(cargado.HoraInicioAmanecer)) resultado.HoraInicioAmanecer = cargado.HoraInicioAmanecer;
             if (!string.IsNullOrEmpty(cargado.HoraInicioMediodia)) resultado.HoraInicioMediodia = cargado.HoraInicioMediodia;
             if (!string.IsNullOrEmpty(cargado.HoraInicioAtardecer)) resultado.HoraInicioAtardecer = cargado.HoraInicioAtardecer;
             if (!string.IsNullOrEmpty(cargado.HoraInicioNoche)) resultado.HoraInicioNoche = cargado.HoraInicioNoche;
-            if (cargado.EsperaInicialSegundos > 0) resultado.EsperaInicialSegundos = cargado.EsperaInicialSegundos;
-            if (cargado.ReintentosClimaInicial > 0) resultado.ReintentosClimaInicial = cargado.ReintentosClimaInicial;
-            if (cargado.EsperaReintentoClima > 0) resultado.EsperaReintentoClima = cargado.EsperaReintentoClima;
-            if (cargado.TtlCacheClima > 0) resultado.TtlCacheClima = cargado.TtlCacheClima;
-            if (cargado.MaxLogBytes > 0) resultado.MaxLogBytes = cargado.MaxLogBytes;
+
+            // Se usa "¿vino la clave en el JSON?" en vez de "> 0" como
+            // señal de "está seteado": un 0 explícito es un valor válido
+            // (por ejemplo TtlCacheClima: 0 para desactivar la caché de
+            // clima) y no debe pisarse con el valor por defecto. Un valor
+            // negativo igual se acepta acá; ValidarConfiguracion es quien
+            // lo rechaza más adelante con un mensaje de error claro.
+            var claves = cargado.ClavesNumericasPresentes;
+            if (claves.Contains("EsperaInicialSegundos")) resultado.EsperaInicialSegundos = cargado.EsperaInicialSegundos;
+            if (claves.Contains("ReintentosClimaInicial")) resultado.ReintentosClimaInicial = cargado.ReintentosClimaInicial;
+            if (claves.Contains("EsperaReintentoClima")) resultado.EsperaReintentoClima = cargado.EsperaReintentoClima;
+            if (claves.Contains("TtlCacheClima")) resultado.TtlCacheClima = cargado.TtlCacheClima;
+            if (claves.Contains("MaxLogBytes")) resultado.MaxLogBytes = cargado.MaxLogBytes;
 
             return resultado;
         }
@@ -1048,12 +1134,6 @@ namespace FieldHouse
         /// </summary>
         private static bool ValidarConfiguracion(FieldHouseConfig config, out string error)
         {
-            if (!Regex.IsMatch(config.Ciudad, "^[A-Za-z0-9.,_-]+$"))
-            {
-                error = "Ciudad inválida ('" + config.Ciudad + "'). Debe contener solo letras y números (sin espacios ni tildes), opcionalmente . , _ o -. Ej: CanuelasAR, LondonGB, ParisFR.";
-                return false;
-            }
-
             if (config.ModoHorarios != "fijo" && config.ModoHorarios != "auto")
             {
                 error = "ModoHorarios inválido ('" + config.ModoHorarios + "'). Debe ser 'fijo' (horarios fijos en config.json) o 'auto' (según la salida/puesta del sol).";
@@ -1105,21 +1185,113 @@ namespace FieldHouse
         }
 
         // ------------------------------------------------------------------
+        // UBICACIÓN (autodetección por IP, sin configuración del usuario)
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Detecta automáticamente la latitud/longitud del usuario a partir
+        /// de su IP pública, usando ip-api.com (gratuito, sin API key, sin
+        /// que el usuario tenga que configurar nada).
+        ///
+        /// A diferencia de ObtenerClima/ObtenerHorariosSol (que cachean por
+        /// TTL/día y devuelven null como único valor de "no disponible"),
+        /// acá el caché NO expira por tiempo: si ip-api.com no responde, se
+        /// sigue usando la última ubicación conocida sin importar su
+        /// antigüedad, en vez de degradar a "sin ubicación". Esto es
+        /// intencional: una notebook normalmente no cambia de ciudad de un
+        /// día para el otro, así que una ubicación de hace unos días sigue
+        /// siendo mucho más útil que no tener ninguna. El caché solo se
+        /// actualiza cuando la consulta realmente tiene éxito.
+        ///
+        /// Devuelve null SOLO si nunca hubo una geolocalización exitosa
+        /// (sin caché previo) y la consulta actual también falla — es
+        /// decir, en una instalación nueva sin conectividad. En ese caso el
+        /// llamador degrada al comportamiento sin clima ni horarios por el
+        /// sol (fondo base + horarios fijos), igual que ante cualquier otro
+        /// fallo de red.
+        /// </summary>
+        private static CacheUbicacion ObtenerUbicacion()
+        {
+            try
+            {
+                string url = "http://ip-api.com/json/?fields=status,lat,lon";
+                string respuesta = DescargarTexto(url, 6000);
+                JsonValor raiz = MiniJson.Parsear(respuesta);
+
+                JsonValor status = raiz.Obtener("status");
+                string statusTexto = (status != null) ? status.ComoTexto("") : "";
+
+                if (statusTexto == "success")
+                {
+                    JsonValor latValor = raiz.Obtener("lat");
+                    JsonValor lonValor = raiz.Obtener("lon");
+                    if (latValor != null && lonValor != null && latValor.Tipo == JsonTipo.Numero && lonValor.Tipo == JsonTipo.Numero)
+                    {
+                        var ubicacion = new CacheUbicacion();
+                        ubicacion.Lat = latValor.ComoDecimal(0);
+                        ubicacion.Lon = lonValor.ComoDecimal(0);
+                        ubicacion.Ts = ObtenerUnixTime();
+
+                        if (!DryRun)
+                        {
+                            try
+                            {
+                                File.WriteAllText(CacheUbicacionFile, ubicacion.AJson(), Encoding.UTF8);
+                            }
+                            catch (IOException)
+                            {
+                                EscribirLog("AVISO: no se pudo guardar el caché de ubicación en " + CacheUbicacionFile + ".");
+                            }
+                        }
+
+                        return ubicacion;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Sin red, timeout, respuesta inesperada: se cae al caché
+                // de abajo, sin importar el motivo puntual del fallo.
+            }
+
+            // ip-api.com no respondió o dio una respuesta inválida: se cae
+            // a la última ubicación conocida, si existe, sin importar su
+            // antigüedad.
+            if (File.Exists(CacheUbicacionFile))
+            {
+                try
+                {
+                    string jsonCache = File.ReadAllText(CacheUbicacionFile);
+                    JsonValor raizCache = MiniJson.Parsear(jsonCache);
+                    return CacheUbicacion.DesdeJson(raizCache);
+                }
+                catch (Exception)
+                {
+                    // Caché corrupto o ilegible: no hay ubicación disponible.
+                }
+            }
+
+            return null;
+        }
+
+        // ------------------------------------------------------------------
         // HORARIOS SEGÚN EL SOL (ModoHorarios = "auto")
         // ------------------------------------------------------------------
 
         /// <summary>
-        /// Consulta la salida y puesta del sol en <paramref name="ciudad"/>
-        /// usando wttr.in (formato j1, el mismo servicio que ya se usa para
-        /// el clima; no hace falta otra API ni coordenadas). Devuelve
-        /// minutos desde medianoche para amanecer, mediodía (punto medio
-        /// entre amanecer y atardecer), atardecer y noche (atardecer + 2
-        /// horas). El resultado se guarda en un caché diario y se reutiliza
-        /// durante el día, para no consultar la API a cada ejecución
-        /// horaria. Devuelve null si no se pudo obtener (sin internet,
-        /// ciudad inválida): el llamador usa entonces los horarios fijos.
+        /// Consulta la salida y puesta del sol en las coordenadas dadas
+        /// usando la API oficial Sunrise 3.0 de MET Norway (api.met.no),
+        /// que devuelve directamente la hora local (con su offset horario
+        /// ya aplicado, sin que haga falta convertir de UTC a mano).
+        /// Devuelve minutos desde medianoche para amanecer, mediodía
+        /// (punto medio entre amanecer y atardecer), atardecer y noche
+        /// (atardecer + 2 horas). El resultado se guarda en un caché
+        /// diario y se reutiliza durante el día, para no consultar la API
+        /// a cada ejecución horaria. Devuelve null si no se pudo obtener
+        /// (sin internet, respuesta inesperada): el llamador usa entonces
+        /// los horarios fijos.
         /// </summary>
-        private static CacheHorariosSol ObtenerHorariosSol(string ciudad)
+        private static CacheHorariosSol ObtenerHorariosSol(double lat, double lon)
         {
             string fechaHoy = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
@@ -1145,7 +1317,9 @@ namespace FieldHouse
             string respuestaTexto;
             try
             {
-                string url = "https://wttr.in/" + Uri.EscapeDataString(ciudad) + "?format=j1";
+                string url = "https://api.met.no/weatherapi/sunrise/3.0/sun?lat=" +
+                    lat.ToString(CultureInfo.InvariantCulture) + "&lon=" +
+                    lon.ToString(CultureInfo.InvariantCulture) + "&date=" + fechaHoy;
                 respuestaTexto = DescargarTexto(url, 6000);
             }
             catch (Exception)
@@ -1158,18 +1332,15 @@ namespace FieldHouse
             try
             {
                 JsonValor raiz = MiniJson.Parsear(respuestaTexto);
-                JsonValor weather = raiz.Obtener("weather");
-                if (weather != null && weather.Tipo == JsonTipo.Arreglo && weather.Arreglo.Count > 0)
+                JsonValor properties = raiz.Obtener("properties");
+                if (properties != null && properties.Tipo == JsonTipo.Objeto)
                 {
-                    JsonValor astronomy = weather.Arreglo[0].Obtener("astronomy");
-                    if (astronomy != null && astronomy.Tipo == JsonTipo.Arreglo && astronomy.Arreglo.Count > 0)
-                    {
-                        JsonValor astro0 = astronomy.Arreglo[0];
-                        JsonValor sunrise = astro0.Obtener("sunrise");
-                        JsonValor sunset = astro0.Obtener("sunset");
-                        salida = (sunrise != null) ? sunrise.ComoTexto(null) : null;
-                        puesta = (sunset != null) ? sunset.ComoTexto(null) : null;
-                    }
+                    JsonValor sunrise = properties.Obtener("sunrise");
+                    JsonValor sunset = properties.Obtener("sunset");
+                    JsonValor sunriseTime = (sunrise != null) ? sunrise.Obtener("time") : null;
+                    JsonValor sunsetTime = (sunset != null) ? sunset.Obtener("time") : null;
+                    salida = ExtraerHoraDeIso8601((sunriseTime != null) ? sunriseTime.ComoTexto(null) : null);
+                    puesta = ExtraerHoraDeIso8601((sunsetTime != null) ? sunsetTime.ComoTexto(null) : null);
                 }
             }
             catch (Exception)
@@ -1182,8 +1353,8 @@ namespace FieldHouse
                 return null;
             }
 
-            int horaAmanecer = ConvertirAMinutos12h(salida);
-            int horaAtardecer = ConvertirAMinutos12h(puesta);
+            int horaAmanecer = ConvertirAMinutos(salida);
+            int horaAtardecer = ConvertirAMinutos(puesta);
             int mediodia = (horaAmanecer + horaAtardecer) / 2;
             int noche = horaAtardecer + 120;
 
@@ -1209,20 +1380,37 @@ namespace FieldHouse
             return resultado;
         }
 
+        /// <summary>
+        /// Extrae la parte "HH:MM" de un timestamp ISO 8601 con offset de
+        /// zona horaria local ya aplicado, como el que devuelven las APIs
+        /// de MET Norway (ej: "2026-08-27T09:16:00+01:00" o
+        /// "2026-08-27T09:16+01:00", el offset puede o no incluir
+        /// segundos). Devuelve null si el formato no es el esperado.
+        /// </summary>
+        private static string ExtraerHoraDeIso8601(string iso)
+        {
+            if (string.IsNullOrEmpty(iso)) return null;
+            Match m = Regex.Match(iso, @"T(\d{2}):(\d{2})");
+            if (!m.Success) return null;
+            return m.Groups[1].Value + ":" + m.Groups[2].Value;
+        }
+
         // ------------------------------------------------------------------
         // CLIMA
         // ------------------------------------------------------------------
 
         /// <summary>
-        /// Consulta wttr.in una vez (con timeout corto) y devuelve la
-        /// condición en minúscula. Devuelve null si la consulta falla o si
-        /// la respuesta no es una condición real (sin internet, ciudad
-        /// inválida, etc). Guarda el resultado en un caché por
+        /// Consulta la API oficial Locationforecast 2.0 (compact) de MET
+        /// Norway una vez (con timeout corto) y devuelve el symbol_code del
+        /// pronóstico más inmediato disponible, en minúscula (ej: "cloudy",
+        /// "rainshowers_day", "fair_night"). Devuelve null si la consulta
+        /// falla o si no se pudo extraer un symbol_code (sin internet,
+        /// respuesta inesperada, etc). Guarda el resultado en un caché por
         /// <paramref name="ttlCache"/> segundos, para no molestar a la API
         /// con consultas redundantes (por ejemplo, cuando la tarea horaria y
         /// el login disparan casi en el mismo momento).
         /// </summary>
-        private static string ObtenerClima(string ciudad, int ttlCache)
+        private static string ObtenerClima(double lat, double lon, int ttlCache)
         {
             if (File.Exists(CacheClimaFile) && !DryRun)
             {
@@ -1246,16 +1434,18 @@ namespace FieldHouse
             string clima;
             try
             {
-                string url = "https://wttr.in/" + Uri.EscapeDataString(ciudad) + "?format=%C";
+                string url = "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=" +
+                    lat.ToString(CultureInfo.InvariantCulture) + "&lon=" +
+                    lon.ToString(CultureInfo.InvariantCulture);
                 string respuesta = DescargarTexto(url, 6000);
-                clima = respuesta.Trim().ToLowerInvariant();
+                clima = ExtraerSymbolCode(respuesta);
             }
             catch (Exception)
             {
                 return null;
             }
 
-            if (string.IsNullOrEmpty(clima) || ClimaCoincide(clima, "unknown", "error", "sorry", "page not found"))
+            if (string.IsNullOrEmpty(clima))
             {
                 return null;
             }
@@ -1276,6 +1466,48 @@ namespace FieldHouse
             }
 
             return clima;
+        }
+
+        /// <summary>
+        /// Extrae el symbol_code del pronóstico más inmediato de una
+        /// respuesta de Locationforecast 2.0 compact: el primer
+        /// timeseries[0].data.next_1_hours.summary.symbol_code, o
+        /// next_6_hours si next_1_hours no está presente (pasa en
+        /// horizontes lejanos; no debería ocurrir para "ahora" pero por
+        /// robustez se contempla igual). Devuelve null si no se pudo
+        /// extraer.
+        /// </summary>
+        private static string ExtraerSymbolCode(string respuestaJson)
+        {
+            JsonValor raiz = MiniJson.Parsear(respuestaJson);
+            JsonValor properties = raiz.Obtener("properties");
+            if (properties == null || properties.Tipo != JsonTipo.Objeto) return null;
+
+            JsonValor timeseries = properties.Obtener("timeseries");
+            if (timeseries == null || timeseries.Tipo != JsonTipo.Arreglo || timeseries.Arreglo.Count == 0) return null;
+
+            JsonValor data = timeseries.Arreglo[0].Obtener("data");
+            if (data == null || data.Tipo != JsonTipo.Objeto) return null;
+
+            string symbol = ExtraerSymbolCodeDeTramo(data, "next_1_hours");
+            if (string.IsNullOrEmpty(symbol))
+            {
+                symbol = ExtraerSymbolCodeDeTramo(data, "next_6_hours");
+            }
+
+            return string.IsNullOrEmpty(symbol) ? null : symbol.ToLowerInvariant();
+        }
+
+        private static string ExtraerSymbolCodeDeTramo(JsonValor data, string nombreTramo)
+        {
+            JsonValor tramo = data.Obtener(nombreTramo);
+            if (tramo == null || tramo.Tipo != JsonTipo.Objeto) return null;
+
+            JsonValor summary = tramo.Obtener("summary");
+            if (summary == null || summary.Tipo != JsonTipo.Objeto) return null;
+
+            JsonValor symbolCode = summary.Obtener("symbol_code");
+            return (symbolCode != null) ? symbolCode.ComoTexto(null) : null;
         }
 
         private static long ObtenerUnixTime()
@@ -1306,7 +1538,11 @@ namespace FieldHouse
             request.Method = "GET";
             request.Timeout = timeoutMs;
             request.ReadWriteTimeout = timeoutMs;
-            request.UserAgent = "FieldHouse-Windows/" + AppVersion;
+            // api.met.no exige un User-Agent que identifique la app y dé
+            // alguna forma de contacto (403 si falta o es genérico); se usa
+            // el mismo para toda descarga (incluida ip-api.com, que no lo
+            // exige pero tampoco le molesta).
+            request.UserAgent = "FieldHouse-LiveWallpaper/" + AppVersion + " (github.com/agustincomolli/field-house)";
 
             using (var response = (HttpWebResponse)request.GetResponse())
             using (var stream = response.GetResponseStream())

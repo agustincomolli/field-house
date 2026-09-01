@@ -4,8 +4,9 @@
 # install.sh — instalador
 #
 # Instala la app en el sistema del usuario (sin sudo, todo en rutas XDG del
-# usuario actual), detecta la ubicación automáticamente para sugerirla como
-# ciudad, y deja los timers de systemd habilitados y corriendo.
+# usuario actual) y deja los timers de systemd habilitados y corriendo. La
+# ubicación geográfica no se pregunta en la instalación: se detecta sola,
+# por IP, en cada ejecución del programa (ver bin/change_wallpaper.sh).
 #
 # Uso:
 #   ./install.sh                instalación normal (resguarda una instalación
@@ -119,7 +120,7 @@ echo "       THE FIELD HOUSE — LIVE WALLPAPER — INSTALADOR  (v$VERSION)"
 echo "====================================================================="
 echo
 echo "Este programa cambia el fondo de pantalla de XFCE automáticamente"
-echo "según la hora del día y el clima de tu ciudad."
+echo "según la hora del día y el clima de tu ubicación (detectada automáticamente)."
 echo
 echo "Se va a instalar en:"
 echo "  Programa e imágenes : $DATOS_APP"
@@ -204,85 +205,18 @@ if [ "$HAY_INSTALACION_PREVIA" = "si" ]; then
 fi
 
 # ----------------------------------------------------------------------------
-# 1) Detección automática de ubicación
-# ----------------------------------------------------------------------------
-# Se usa ip-api.com (HTTP, gratuito, sin API key para uso no comercial y
-# volumen bajo) para resolver ciudad + país a partir de la IP pública.
-# Si falla, o el usuario no está conforme, se le pide que la escriba a mano.
-
-echo
-info "1/4 - Detectando tu ubicación automáticamente..."
-
-CIUDAD_DETECTADA=""
-CIUDAD_LEGIBLE=""
-
-RESPUESTA_GEO=$(curl -s -m 8 "http://ip-api.com/json/?fields=status,city,countryCode" || true)
-
-if echo "$RESPUESTA_GEO" | grep -q '"status":"success"'; then
-    CITY=$(echo "$RESPUESTA_GEO" | grep -oP '"city":"\K[^"]+' || true)
-    COUNTRY=$(echo "$RESPUESTA_GEO" | grep -oP '"countryCode":"\K[^"]+' || true)
-
-    if [[ -n "$CITY" && -n "$COUNTRY" ]]; then
-        # wttr.in espera el nombre de ciudad sin espacios, pegado al código
-        # de país funciona bien como desambiguador (igual que "CanuelasAR").
-        CIUDAD_DETECTADA="${CITY// /}${COUNTRY}"
-        CIUDAD_LEGIBLE="$CITY, $COUNTRY"
-    fi
-fi
-
-if [[ -n "$CIUDAD_DETECTADA" ]]; then
-    success "Ubicación detectada: $CIUDAD_LEGIBLE"
-    echo
-    echo "Se va a usar como ciudad para consultar el clima: $CIUDAD_DETECTADA"
-    read -rp "¿Es correcta? [S/n]: " CONFIRM_CIUDAD
-
-    if [[ ! "$CONFIRM_CIUDAD" =~ ^([sS]|[yY]|)$ ]]; then
-        CIUDAD_DETECTADA=""
-    fi
-else
-    warning "No se pudo detectar la ubicación automáticamente (sin internet o el servicio no respondió)."
-fi
-
-if [[ -z "$CIUDAD_DETECTADA" ]]; then
-    echo
-    echo "Ingresá tu ciudad manualmente, sin espacios ni tildes, seguida del"
-    echo "código de país si tu ciudad tiene nombres repetidos en el mundo"
-    echo "(por ejemplo: CanuelasAR, LondonGB, ParisFR)."
-    echo
-    echo "Podés probar qué te devuelve wttr.in para un nombre antes de"
-    echo "confirmarlo, abriendo en otra terminal:"
-    echo '  curl "https://wttr.in/TuCiudad?format=%C"'
-    echo
-    read -rp "Ciudad: " CIUDAD_DETECTADA
-
-    while [[ -z "$CIUDAD_DETECTADA" ]]; do
-        warning "No puede quedar vacío."
-        read -rp "Ciudad: " CIUDAD_DETECTADA
-    done
-fi
-
-# Misma validación que aplica change_wallpaper.sh en el arranque: si el nombre
-# tuviera caracteres que rompen la URL de wttr.in, nadie se enteraría hasta
-# ver un fondo raro. Mejor fallar acá, con el valor a la vista.
-if [[ ! "$CIUDAD_DETECTADA" =~ ^[A-Za-z0-9.,_-]+$ ]]; then
-    error "Ciudad inválida: '$CIUDAD_DETECTADA'. Solo letras y números (sin espacios ni tildes), opcionalmente . , _ o -. Ej: CanuelasAR, LondonGB."
-    exit 1
-fi
-
-success "Ciudad configurada: $CIUDAD_DETECTADA"
-
-# ----------------------------------------------------------------------------
 # Modo de horarios (fijo por defecto; auto según la salida/puesta del sol)
 # ----------------------------------------------------------------------------
 # "fijo" usa siempre los horarios de config.conf (comportamiento original).
 # "auto" calcula las franjas a partir de la salida y puesta real del sol de
-# la ciudad, con los horarios fijos como respaldo si la consulta falla.
+# la ubicación detectada automáticamente, con los horarios fijos como
+# respaldo si la consulta falla.
 
 echo
 info "Modo de horarios..."
 echo "  - 'fijo':  horarios fijos (amanecer 06:00, mediodía 10:00, atardecer 15:00, noche 20:00),"
 echo "             siempre iguales, sin importar la estación del año."
-echo "  - 'auto':  franjas según la salida y puesta real del sol en tu ciudad (mediodía ="
+echo "  - 'auto':  franjas según la salida y puesta real del sol en tu ubicación (mediodía ="
 echo "             punto medio, noche = puesta + 2 hs). Requiere internet para calcularlas."
 MODO_HORARIOS=""
 read -rp "¿Cuál querés? [fijo/auto] (default: fijo): " MODO_HORARIOS
@@ -300,7 +234,7 @@ success "Horarios: $MODO_HORARIOS"
 # ----------------------------------------------------------------------------
 
 echo
-info "2/4 - Instalando archivos..."
+info "1/3 - Instalando archivos..."
 
 mkdir -p "$DATOS_APP/bin" "$DATOS_APP/fondos" "$CONFIG_DIR" "$STATE_DIR" "$SYSTEMD_USER_DIR"
 
@@ -326,7 +260,7 @@ success "Programa instalado en $DATOS_APP"
 # ----------------------------------------------------------------------------
 
 echo
-info "3/4 - Generando configuración..."
+info "2/3 - Generando configuración..."
 
 # No hay backup de la configuración anterior: la instalación es de fábrica.
 # (La limpieza del paso 0 ya borró lo viejo; la reinstalación no conserva nada.)
@@ -335,12 +269,14 @@ cat << EOF > "$CONFIG_FILE"
 # Configuración de The Field House.
 # Podés editar estos valores en cualquier momento; se aplican en la
 # próxima ejecución (no hace falta reinstalar ni reiniciar la sesión).
+#
+# La ubicación geográfica NO se configura acá: se detecta automáticamente
+# por IP en cada ejecución con --reboot (ver obtener_ubicacion() en
+# bin/change_wallpaper.sh). Se cachea en el estado de la app y esa ubicación
+# se sigue usando si en algún momento no hay red disponible para redetectarla.
 
 # Carpeta donde están las imágenes de fondo.
 CARPETA_FONDOS="$DATOS_APP/fondos"
-
-# Ciudad para consultar el clima en wttr.in (sin espacios ni tildes).
-CIUDAD="$CIUDAD_DETECTADA"
 
 # Modo de horarios: "fijo" (usa los HORA_INICIO_* de acá abajo, siempre los
 # mismos) o "auto" (calcula amanecer/mediodía/atardecer/noche según la salida
@@ -360,18 +296,20 @@ PASOS_TRANSICION=15
 PAUSA_ENTRE_PASOS="0.15"
 
 # Espera en segundos antes de aplicar el fondo al iniciar sesión, para
-# darle tiempo a XFCE a estar listo.
+# darle tiempo a XFCE (y a la red) a estar listos.
 ESPERA_INICIAL_SEGUNDOS=15
 
 # Al iniciar sesión, si la red todavía no está lista (WiFi lentos, etc.),
-# se aplica el fondo base de la franja y se reintenta el clima cada
-# ESPERA_REINTENTO_CLIMA segundos, hasta REINTENTOS_CLIMA_INICIAL veces.
+# se aplica el fondo base de la franja y se reintenta la geolocalización y
+# el clima cada ESPERA_REINTENTO_CLIMA segundos, hasta REINTENTOS_CLIMA_INICIAL
+# veces.
 REINTENTOS_CLIMA_INICIAL=3
 ESPERA_REINTENTO_CLIMA=60
 
 # Caché del clima: durante cuántos segundos se reutiliza la última consulta
-# a wttr.in antes de volver a consultar (evita llamadas redundantes cuando
-# el timer horario y el login disparan casi en el mismo momento).
+# a la API meteorológica antes de volver a consultar (evita llamadas
+# redundantes cuando el timer horario y el login disparan casi en el mismo
+# momento).
 TTL_CACHE_CLIMA=600
 
 # Tamaño máximo del log en bytes antes de rotarlo a log.txt.1 (1 MiB).
@@ -390,7 +328,7 @@ fi
 # ----------------------------------------------------------------------------
 
 echo
-info "4/4 - Configurando ejecución automática (systemd)..."
+info "3/3 - Configurando ejecución automática (systemd)..."
 
 # Los archivos .service apuntan a %h (HOME del usuario), así que se copian
 # tal cual, sin necesidad de reemplazar rutas.
@@ -433,7 +371,7 @@ echo
 echo "  ✓ Programa      : $DATOS_APP"
 echo "  ✓ Configuración : $CONFIG_FILE"
 echo "  ✓ Logs          : $STATE_DIR/log.txt"
-echo "  ✓ Ciudad        : $CIUDAD_DETECTADA"
+echo "  ✓ Ubicación     : detección automática por IP en cada arranque"
 echo "  ✓ Horarios      : $MODO_HORARIOS"
 echo
 if [ "$HAY_INSTALACION_PREVIA" = "si" ]; then
@@ -467,7 +405,7 @@ echo
 echo "  Ver el log:"
 echo "    tail -f $STATE_DIR/log.txt"
 echo
-echo "  Editar configuración (ciudad, franjas horarias):"
+echo "  Editar configuración (franjas horarias, transición):"
 echo "    nano $CONFIG_FILE"
 echo
 echo "  Desinstalar:"

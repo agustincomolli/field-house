@@ -6,11 +6,13 @@
 #
 # Cambia el fondo de pantalla en XFCE (Linux Mint y derivados) según franjas
 # horarias FIJAS del reloj, y según el clima actual (lluvia/nublado) en
-# amanecer, mediodía, atardecer o noche.
+# amanecer, mediodía, atardecer o noche. La ubicación geográfica se detecta
+# automáticamente por IP en cada ejecución (ver obtener_ubicacion); el
+# usuario no configura ninguna ciudad ni coordenadas.
 #
-# Este script es el "motor" de la app. La configuración (ciudad, franjas
-# horarias, transición) vive en un archivo aparte que se carga acá abajo,
-# para que el usuario no tenga que tocar este archivo directamente.
+# Este script es el "motor" de la app. La configuración (franjas horarias,
+# transición) vive en un archivo aparte que se carga acá abajo, para que el
+# usuario no tenga que tocar este archivo directamente.
 #
 # Se ejecuta automáticamente vía systemd (ver los archivos .service/.timer
 # en systemd/, instalados por install.sh). También se puede correr a mano
@@ -19,8 +21,8 @@
 # Uso:
 #   change_wallpaper.sh            ejecución normal (la usa el timer de systemd)
 #   change_wallpaper.sh --reboot   ejecución al iniciar sesión (agrega una
-#                                espera inicial y reintentos de clima, ver
-#                                ESPERA_INICIAL_SEGUNDOS/REINTENTOS_CLIMA_INICIAL)
+#                                espera inicial y reintentos de ubicación/clima,
+#                                ver ESPERA_INICIAL_SEGUNDOS/REINTENTOS_CLIMA_INICIAL)
 #   change_wallpaper.sh --dry-run  muestra qué fondo se aplicaría sin tocar
 #                                xfconf ni los archivos de estado/red
 #   change_wallpaper.sh --version  muestra la versión
@@ -36,6 +38,10 @@ set -u
 VERSION_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/VERSION"
 VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
 
+# api.met.no exige un User-Agent que identifique la aplicación (da 403 si
+# falta o es genérico); se usa este en toda consulta a esa API.
+MET_USER_AGENT="User-Agent: FieldHouse-LiveWallpaper/$VERSION (github.com/agustincomolli/field-house)"
+
 # ----------------------------------------------------------------------------
 # RUTAS (convención XDG Base Directory)
 # ----------------------------------------------------------------------------
@@ -45,7 +51,7 @@ VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
 # acá o cambia CARPETA_FONDOS en el archivo de configuración.
 DATOS_APP="${XDG_DATA_HOME:-$HOME/.local/share}/field-house"
 
-# Configuración editable por el usuario (ciudad, franjas horarias, etc).
+# Configuración editable por el usuario (franjas horarias, transición, etc).
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/field-house"
 CONFIG_FILE="$CONFIG_DIR/config.conf"
 
@@ -54,6 +60,7 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/field-house"
 LOG="$STATE_DIR/log.txt"
 CACHE_CLIMA="$STATE_DIR/clima.cache"
 CACHE_HORARIOS="$STATE_DIR/horarios-sol.cache"
+CACHE_UBICACION="$STATE_DIR/ubicacion.cache"
 
 # ----------------------------------------------------------------------------
 # PARÁMETROS DE LÍNEA DE COMANDO
@@ -68,7 +75,8 @@ mostrar_ayuda() {
 The Field House — Live Wallpaper v$VERSION
 
 Cambia el fondo de pantalla XFCE según la franja horaria (amanecer, mediodía,
-atardecer, noche) y el clima actual (nublado/lluvia) de tu ciudad.
+atardecer, noche) y el clima actual (nublado/lluvia) de tu ubicación,
+detectada automáticamente por IP.
 
 Uso:
   change_wallpaper.sh [opciones]
@@ -76,15 +84,16 @@ Uso:
 Opciones:
   (sin opciones)  Ejecución normal. La usa el timer de systemd.
   --reboot        Ejecución de inicio de sesión: espera ESPERA_INICIAL_SEGUNDOS
-                  y, si la red no está lista, reintenta el clima hasta
-                  REINTENTOS_CLIMA_INICIAL veces cada ESPERA_REINTENTO_CLIMA s.
+                  y, si la red no está lista, reintenta la ubicación y el
+                  clima hasta REINTENTOS_CLIMA_INICIAL veces cada
+                  ESPERA_REINTENTO_CLIMA segundos.
   --dry-run       Simula la ejecución: muestra qué fondo se aplicaría sin tocar
                   xfconf, sin escribir logs ni estado, y sin esperas. Puede
                   combinarse con --reboot.
   --version       Muestra la versión del programa.
   --help, -h      Muestra esta ayuda.
 
-La configuración (ciudad, horarios, transición) se lee de:
+La configuración (horarios, transición) se lee de:
   $CONFIG_FILE
 
 Los logs se escriben en:
@@ -172,16 +181,58 @@ hora_a_minutos() {
     echo "$hora" | awk -F: '{print $1*60+$2}'
 }
 
-# hora_12_a_minutos <"HH:MM AM|PM">
-# Convierte una hora en formato 12 horas (con AM/PM, como la manda wttr.in en
-# su formato j1: "07:32 AM", "06:25 PM") a minutos desde medianoche.
-hora_12_a_minutos() {
-    echo "$1" | awk -F'[ :]' '{
-        h = $1; m = $2;
-        if ($3 == "PM" && h != 12) h += 12;
-        if ($3 == "AM" && h == 12) h = 0;
-        print h * 60 + m
-    }'
+# obtener_ubicacion
+# Detecta automáticamente la latitud/longitud del usuario a partir de su IP
+# pública, usando ip-api.com (gratuito, sin API key, sin que el usuario tenga
+# que configurar nada). Devuelve "LAT LON" separados por espacio.
+#
+# A diferencia de consultar_clima/consultar_horarios_sol (que cachean por
+# TTL/día y usan cadena vacía como único valor de "no disponible"), acá el
+# caché NO expira por tiempo: si ip-api.com no responde, se seguye usando la
+# última ubicación conocida sin importar su antigüedad, en vez de degradar a
+# "sin ubicación". Esto es intencional: una notebook normalmente no cambia de
+# ciudad de un día para el otro, así que una ubicación de hace unos días
+# sigue siendo mucho más útil que no tener ninguna. El caché solo se
+# actualiza cuando la consulta realmente tiene éxito.
+#
+# Devuelve cadena vacía SOLO si nunca hubo una geolocalización exitosa (sin
+# caché previo) y la consulta actual también falla — es decir, en una
+# instalación nueva sin conectividad. En ese caso el llamador degrada al
+# comportamiento sin clima ni horarios por el sol (fondo base + horarios
+# fijos), igual que ante cualquier otro fallo de red.
+obtener_ubicacion() {
+    local respuesta lat lon cache_lat cache_lon
+
+    respuesta=$(curl -s --connect-timeout 2 --max-time 6 \
+        "http://ip-api.com/json/?fields=status,lat,lon" 2>/dev/null)
+
+    if echo "$respuesta" | grep -q '"status":"success"'; then
+        lat=$(echo "$respuesta" | grep -oE '"lat":[0-9.-]+' | cut -d: -f2)
+        lon=$(echo "$respuesta" | grep -oE '"lon":[0-9.-]+' | cut -d: -f2)
+
+        if [ -n "$lat" ] && [ -n "$lon" ]; then
+            if [ "$MODO_DRY" = "no" ]; then
+                { echo "LAT=$lat"; echo "LON=$lon"; echo "TS=$(date +%s)"; } > "$CACHE_UBICACION" 2>/dev/null || \
+                    log "AVISO: no se pudo guardar el caché de ubicación en $CACHE_UBICACION."
+            fi
+            echo "$lat $lon"
+            return 0
+        fi
+    fi
+
+    # ip-api.com no respondió o dio una respuesta inválida: se cae a la
+    # última ubicación conocida, si existe, sin importar su antigüedad.
+    if [ -f "$CACHE_UBICACION" ]; then
+        cache_lat=$(grep '^LAT=' "$CACHE_UBICACION" 2>/dev/null | cut -d= -f2)
+        cache_lon=$(grep '^LON=' "$CACHE_UBICACION" 2>/dev/null | cut -d= -f2)
+        if [ -n "$cache_lat" ] && [ -n "$cache_lon" ]; then
+            echo "$cache_lat $cache_lon"
+            return 0
+        fi
+    fi
+
+    echo ""
+    return 1
 }
 
 # min_a_hora <minutos>
@@ -200,19 +251,21 @@ min_a_hora() {
     printf '%02d:%02d' "$(( min / 60 ))" "$(( min % 60 ))"
 }
 
-# consultar_horarios_sol
-# Consulta la salida y puesta del sol en CIUDAD usando wttr.in (formato j1,
-# el mismo servicio que ya se usa para el clima; no hace falta otra API ni
-# coordenadas). Devuelve cuatro enteros separados por espacios:
+# consultar_horarios_sol <lat> <lon>
+# Consulta la salida y puesta del sol en las coordenadas dadas usando la API
+# oficial Sunrise 3.0 de MET Norway (api.met.no), que devuelve directamente
+# la hora local (con su offset horario ya aplicado, sin que haga falta
+# convertir de UTC a mano). Devuelve cuatro enteros separados por espacios:
 #   amanecer mediodía atardecer noche  (minutos desde medianoche)
 # siendo: amanecer = salida real del sol, atardecer = puesta real, mediodía =
 # el punto medio entre ambas, y noche = puesta + 2 horas.
 # El resultado se guarda en un caché diario (horarios-sol.cache) y se reutiliza
 # durante el día, para no consultar la API a cada ejecución horaria. Devuelve
-# vacío si no se pudo obtener (sin internet, ciudad inválida): el llamador usa
+# vacío si no se pudo obtener (sin internet, sin ubicación): el llamador usa
 # entonces los horarios fijos de config.conf.
 consultar_horarios_sol() {
-    local fecha_hoy sun risa puesta hora_am hora_ha pm mn
+    local lat="$1" lon="$2"
+    local fecha_hoy sun salida puesta hora_am hora_ha pm mn
 
     fecha_hoy=$(date +%F)
 
@@ -229,17 +282,22 @@ consultar_horarios_sol() {
         fi
     fi
 
-    sun=$(curl -s --connect-timeout 2 --max-time 6 "https://wttr.in/${CIUDAD}?format=j1" 2>/dev/null)
-    risa=$(printf '%s' "$sun" | grep -oE '"sunrise": *"[0-9]{1,2}:[0-9]{2} [AP]M"' | head -n 1 | grep -oE '[0-9]{1,2}:[0-9]{2} [AP]M')
-    puesta=$(printf '%s' "$sun" | grep -oE '"sunset": *"[0-9]{1,2}:[0-9]{2} [AP]M"' | head -n 1 | grep -oE '[0-9]{1,2}:[0-9]{2} [AP]M')
+    sun=$(curl -s --connect-timeout 2 --max-time 6 -H "$MET_USER_AGENT" \
+        "https://api.met.no/weatherapi/sunrise/3.0/sun?lat=${lat}&lon=${lon}&date=${fecha_hoy}" 2>/dev/null)
 
-    if [ -z "$risa" ] || [ -z "$puesta" ]; then
+    # properties.sunrise.time / properties.sunset.time vienen en ISO 8601
+    # con el offset horario local ya aplicado, ej: "2026-08-27T09:16+01:00".
+    # Solo hace falta la parte HH:MM, que es lo único que usa hora_a_minutos.
+    salida=$(printf '%s' "$sun" | grep -oE '"sunrise" *: *\{[^}]*"time" *: *"[^"]+"' | grep -oE '"time" *: *"[^"]+"' | grep -oE '[0-9]{2}:[0-9]{2}' | head -n 1)
+    puesta=$(printf '%s' "$sun" | grep -oE '"sunset" *: *\{[^}]*"time" *: *"[^"]+"' | grep -oE '"time" *: *"[^"]+"' | grep -oE '[0-9]{2}:[0-9]{2}' | head -n 1)
+
+    if [ -z "$salida" ] || [ -z "$puesta" ]; then
         echo ""
         return 1
     fi
 
-    hora_am=$(hora_12_a_minutos "$risa")
-    hora_ha=$(hora_12_a_minutos "$puesta")
+    hora_am=$(hora_a_minutos "$salida")
+    hora_ha=$(hora_a_minutos "$puesta")
     pm=$(( (hora_am + hora_ha) / 2 ))
     mn=$(( hora_ha + 120 ))
 
@@ -295,11 +353,6 @@ validar_dependencias() {
 # o rompería las consultas de clima en silencio.
 validar_configuracion() {
     local var valor
-
-    if ! [[ "$CIUDAD" =~ ^[A-Za-z0-9.,_-]+$ ]]; then
-        log "ERROR: CIUDAD inválida ('$CIUDAD'). Debe contener solo letras y números (sin espacios ni tildes), opcionalmente . , _ o -. Ej: CanuelasAR, LondonGB, ParisFR."
-        exit 1
-    fi
 
     if ! [[ "$MODO_HORARIOS" =~ ^(fijo|auto)$ ]]; then
         log "ERROR: MODO_HORARIOS inválido ('$MODO_HORARIOS'). Debe ser 'fijo' (horarios hardcodeados en config.conf) o 'auto' (según la salida/puesta del sol)."
@@ -494,15 +547,18 @@ transicionar_fondo() {
     TMP_TRANSICION=""
 }
 
-# consultar_clima
-# Consulta wttr.in UNA vez (con timeout corto de conexión) y devuelve la
-# condición en minúscula. Devuelve cadena vacía si la consulta falla o si la
-# respuesta no es una condición real (sin internet, ciudad inválida, etc).
+# consultar_clima <lat> <lon>
+# Consulta la API oficial Locationforecast 2.0 (compact) de MET Norway UNA
+# vez (con timeout corto de conexión) y devuelve el symbol_code del pronóstico
+# más inmediato disponible, en minúscula (ej: "cloudy", "rainshowers_day",
+# "fair_night"). Devuelve cadena vacía si la consulta falla o si no se pudo
+# extraer un symbol_code (sin internet, respuesta inesperada, etc).
 # Para no molestar a la API con consultas redundantes (por ejemplo, cuando el
 # timer horario y el login disparan casi en el mismo momento), se guarda el
 # resultado en un caché por TTL_CACHE_CLIMA segundos.
 consultar_clima() {
-    local ahora timestamp_cached respuesta pared
+    local lat="$1" lon="$2"
+    local ahora timestamp_cached respuesta symbol
 
     if [ -f "$CACHE_CLIMA" ]; then
         timestamp_cached=$(grep '^TS=' "$CACHE_CLIMA" 2>/dev/null | cut -d= -f2)
@@ -515,24 +571,31 @@ consultar_clima() {
         fi
     fi
 
-    respuesta=$(curl -s --connect-timeout 2 --max-time 6 "https://wttr.in/${CIUDAD}?format=%C" 2>/dev/null)
-    pared=$(printf '%s' "$respuesta" | tr '[:upper:]' '[:lower:]')
+    respuesta=$(curl -s --connect-timeout 2 --max-time 6 -H "$MET_USER_AGENT" \
+        "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat}&lon=${lon}" 2>/dev/null)
 
-    # wttr.in devuelve texto legible ("patchy rain possible", "overcast"...).
-    # Respuestas vacías, o de error (ciudad desconocida, HTML, etc), cuentan
-    # como fallo para no aplicar un fondo raro.
-    if [ -z "$pared" ] || echo "$pared" | grep -qE "unknown|error|sorry|page not found"; then
+    # Se busca el symbol_code del primer tramo (next_1_hours) del primer
+    # timeseries, que es el pronóstico más inmediato. Si el pronóstico más
+    # cercano no trae next_1_hours (pasa en horizontes lejanos, no debería
+    # ocurrir para "ahora" pero por robustez), se cae a next_6_hours.
+    symbol=$(printf '%s' "$respuesta" | grep -oE '"next_1_hours" *: *\{.*"symbol_code" *: *"[^"]+"' | head -n 1 | grep -oE '"symbol_code" *: *"[^"]+"' | grep -oE '"[^"]+"$' | tr -d '"')
+    if [ -z "$symbol" ]; then
+        symbol=$(printf '%s' "$respuesta" | grep -oE '"next_6_hours" *: *\{.*"symbol_code" *: *"[^"]+"' | head -n 1 | grep -oE '"symbol_code" *: *"[^"]+"' | grep -oE '"[^"]+"$' | tr -d '"')
+    fi
+    symbol=$(printf '%s' "$symbol" | tr '[:upper:]' '[:lower:]')
+
+    if [ -z "$symbol" ]; then
         echo ""
         return 1
     fi
 
     if [ "$MODO_DRY" = "no" ]; then
         ahora=$(date +%s)
-        { echo "TS=$ahora"; echo "CLIMA=$pared"; } > "$CACHE_CLIMA" 2>/dev/null || \
+        { echo "TS=$ahora"; echo "CLIMA=$symbol"; } > "$CACHE_CLIMA" 2>/dev/null || \
             log "AVISO: no se pudo guardar el caché de clima en $CACHE_CLIMA."
     fi
 
-    echo "$pared"
+    echo "$symbol"
 }
 
 # ----------------------------------------------------------------------------
@@ -599,7 +662,6 @@ source "$CONFIG_FILE"
 # Valores por defecto por si el archivo de config es viejo y le faltan
 # variables nuevas (evita que un update rompa una instalación existente).
 : "${CARPETA_FONDOS:=$DATOS_APP/fondos}"
-: "${CIUDAD:=}"
 : "${MODO_HORARIOS:=fijo}"
 : "${HORA_INICIO_AMANECER:=06:00}"
 : "${HORA_INICIO_MEDIODIA:=10:00}"
@@ -612,11 +674,6 @@ source "$CONFIG_FILE"
 : "${ESPERA_REINTENTO_CLIMA:=60}"
 : "${TTL_CACHE_CLIMA:=600}"
 : "${MAX_LOG_BYTES:=1048576}"
-
-if [ -z "$CIUDAD" ]; then
-    log "ERROR: no hay ciudad configurada en $CONFIG_FILE. Corré install.sh de nuevo o editá CIUDAD manualmente."
-    exit 1
-fi
 
 validar_configuracion
 
@@ -659,6 +716,40 @@ if [ "${#FALTANTES[@]}" -gt 0 ]; then
 fi
 
 # ----------------------------------------------------------------------------
+# 1.5) Detectar la ubicación automáticamente (para clima y horarios por el sol)
+# ----------------------------------------------------------------------------
+# El usuario no configura ninguna ciudad ni coordenadas: en cada ejecución se
+# detecta la ubicación a partir de la IP pública (ver obtener_ubicacion). Al
+# iniciar sesión (--reboot) la red puede estar todavía levantándose, así que
+# se reintenta hasta REINTENTOS_CLIMA_INICIAL veces cada ESPERA_REINTENTO_CLIMA
+# segundos -- el mismo mecanismo de espera que ya existía para el clima, ahora
+# también cubre la geolocalización porque ambas dependen de que la red esté
+# lista. Si tras los reintentos no hay ubicación (ni siquiera una vieja en
+# caché), LAT/LON quedan vacíos y las secciones siguientes se degradan al
+# comportamiento sin clima ni horarios por el sol.
+
+LAT=""
+LON=""
+if [ "$ARG_REBOOT" = "si" ] && [ "$MODO_DRY" = "no" ]; then
+    intento=1
+    while [ "$intento" -le "$REINTENTOS_CLIMA_INICIAL" ]; do
+        read -r LAT LON <<< "$(obtener_ubicacion)"
+        [ -n "$LAT" ] && [ -n "$LON" ] && break
+        if [ "$intento" -lt "$REINTENTOS_CLIMA_INICIAL" ]; then
+            log "Sin internet todavía para geolocalizar (intento $intento/$REINTENTOS_CLIMA_INICIAL), se reintenta en ${ESPERA_REINTENTO_CLIMA}s."
+            sleep "$ESPERA_REINTENTO_CLIMA"
+        fi
+        intento=$((intento + 1))
+    done
+else
+    read -r LAT LON <<< "$(obtener_ubicacion)"
+fi
+
+if [ -z "$LAT" ] || [ -z "$LON" ]; then
+    log "AVISO: no se pudo detectar la ubicación (sin internet y sin una ubicación previa en caché); se usan horarios fijos y no hay clima disponible en esta ejecución."
+fi
+
+# ----------------------------------------------------------------------------
 # 2) Determinar la franja horaria actual (horas fijas)
 # ----------------------------------------------------------------------------
 
@@ -666,21 +757,24 @@ AHORA_MIN=$(hora_a_minutos "$(date +%H:%M)")
 
 # Horarios de las franjas. Por defecto (MODO_HORARIOS=fijo) son fijos, desde
 # config.conf. En modo auto se calculan según la salida/puesta real del sol
-# en CIUDAD; si ese cálculo falla (sin internet, por ejemplo), se degrada a
-# los horarios fijos, que funcionan además como valores de respaldo.
+# en la ubicación detectada; si ese cálculo falla (sin internet o sin
+# ubicación, por ejemplo), se degrada a los horarios fijos, que funcionan
+# además como valores de respaldo.
 MIN_AMANECER=$(hora_a_minutos "$HORA_INICIO_AMANECER")
 MIN_MEDIODIA=$(hora_a_minutos "$HORA_INICIO_MEDIODIA")
 MIN_ATARDECER=$(hora_a_minutos "$HORA_INICIO_ATARDECER")
 MIN_NOCHE=$(hora_a_minutos "$HORA_INICIO_NOCHE")
 
-if [ "$MODO_HORARIOS" = "auto" ]; then
-    horarios_sol=$(consultar_horarios_sol)
+if [ "$MODO_HORARIOS" = "auto" ] && [ -n "$LAT" ] && [ -n "$LON" ]; then
+    horarios_sol=$(consultar_horarios_sol "$LAT" "$LON")
     if [ -n "$horarios_sol" ]; then
         read -r MIN_AMANECER MIN_MEDIODIA MIN_ATARDECER MIN_NOCHE <<< "$horarios_sol"
         log "Horarios según el sol: amanecer $(min_a_hora "$MIN_AMANECER"), mediodía $(min_a_hora "$MIN_MEDIODIA"), atardecer $(min_a_hora "$MIN_ATARDECER"), noche $(min_a_hora "$MIN_NOCHE")"
     else
         log "AVISO: no se pudo obtener la salida/puesta del sol; se usan los horarios fijos de config.conf."
     fi
+elif [ "$MODO_HORARIOS" = "auto" ]; then
+    log "AVISO: MODO_HORARIOS=auto pero no hay ubicación disponible; se usan los horarios fijos de config.conf."
 fi
 
 # FRANJA_CLIMA indica qué fondo de nublado/lluvia corresponde según la
@@ -713,6 +807,8 @@ fi
 #    (por ejemplo un WiFi que tarda en conectarse), así que si la consulta
 #    falla se aplica ya el fondo base de la franja y se reintenta cada
 #    ESPERA_REINTENTO_CLIMA segundos, hasta REINTENTOS_CLIMA_INICIAL veces.
+#    (La ubicación en sí ya se resolvió en el paso 1.5; acá solo se reintenta
+#    la consulta de clima con esa ubicación.)
 # ----------------------------------------------------------------------------
 # DISPLAY y DBUS son necesarios porque systemd/cron pueden correr esto sin
 # que las variables de la sesión gráfica estén heredadas.
@@ -721,25 +817,27 @@ export DISPLAY="${DISPLAY:-:0}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
 
 CLIMA=""
-if [ "$ARG_REBOOT" = "si" ] && [ "$MODO_DRY" = "no" ]; then
+if [ -z "$LAT" ] || [ -z "$LON" ]; then
+    : # sin ubicación disponible: CLIMA queda vacío, se usa el fondo base
+elif [ "$ARG_REBOOT" = "si" ] && [ "$MODO_DRY" = "no" ]; then
     intento=1
     while [ "$intento" -le "$REINTENTOS_CLIMA_INICIAL" ]; do
-        CLIMA=$(consultar_clima)
+        CLIMA=$(consultar_clima "$LAT" "$LON")
         [ -n "$CLIMA" ] && break
         if [ "$intento" -lt "$REINTENTOS_CLIMA_INICIAL" ]; then
-            log "Sin internet todavía (intento $intento/$REINTENTOS_CLIMA_INICIAL), se aplica el fondo base y se reintenta en ${ESPERA_REINTENTO_CLIMA}s."
+            log "Sin internet todavía para el clima (intento $intento/$REINTENTOS_CLIMA_INICIAL), se aplica el fondo base y se reintenta en ${ESPERA_REINTENTO_CLIMA}s."
             transicionar_fondo "$FONDO"
             sleep "$ESPERA_REINTENTO_CLIMA"
         fi
         intento=$((intento + 1))
     done
 else
-    CLIMA=$(consultar_clima)
+    CLIMA=$(consultar_clima "$LAT" "$LON")
 fi
 
 if [ -z "$CLIMA" ]; then
     log "No se pudo consultar el clima, se usa el fondo base ($MOMENTO)"
-elif echo "$CLIMA" | grep -qE "overcast|cloudy"; then
+elif echo "$CLIMA" | grep -qE "cloudy|fair|partlycloudy"; then
     case "$FRANJA_CLIMA" in
         dia|atardecer)
             FONDO="$FONDO_NUBLADO_DIA"
@@ -750,7 +848,7 @@ elif echo "$CLIMA" | grep -qE "overcast|cloudy"; then
             MOMENTO="nublado de noche ($CLIMA)"
             ;;
     esac
-elif echo "$CLIMA" | grep -qE "rain|drizzle|shower|thunder|mist|fog"; then
+elif echo "$CLIMA" | grep -qE "rain|sleet|snow|thunder|fog"; then
     case "$FRANJA_CLIMA" in
         dia)
             FONDO="$FONDO_LLUVIA_DIA"

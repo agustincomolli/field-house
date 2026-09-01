@@ -11,7 +11,6 @@
 set -Eeuo pipefail
 
 ORIGEN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="$(tr -d '[:space:]' < "$ORIGEN/VERSION")"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -26,6 +25,17 @@ DATOS_APP="${XDG_DATA_HOME:-$HOME/.local/share}/field-house"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/field-house"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/field-house"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+
+# Se lee la versión de la instalación real ($DATOS_APP), no la del repo
+# clonado ($ORIGEN): son cosas distintas si el usuario actualizó el repo
+# antes de desinstalar una versión anterior. Si la instalación no tiene
+# VERSION (instalación muy vieja, o ya se corrió este desinstalador antes),
+# se cae al VERSION del repo como mejor aproximación disponible.
+if [[ -f "$DATOS_APP/VERSION" ]]; then
+    VERSION="$(tr -d '[:space:]' < "$DATOS_APP/VERSION")"
+else
+    VERSION="$(tr -d '[:space:]' < "$ORIGEN/VERSION")"
+fi
 
 echo
 echo "====================================================================="
@@ -63,7 +73,7 @@ if [[ "$CONFIRM_CONFIG" =~ ^([sS]|[yY])$ ]]; then
     rm -rf "$STATE_DIR"
     success "Configuración y logs borrados."
 else
-    warning "Se conservaron $CONFIG_DIR y $STATE_DIR. Si reinstalás más adelante, tu ciudad y franjas horarias van a seguir ahí."
+    warning "Se conservaron $CONFIG_DIR y $STATE_DIR. Si reinstalás más adelante, tus franjas horarias y la última ubicación detectada van a seguir ahí."
 fi
 
 echo

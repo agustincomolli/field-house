@@ -1,8 +1,13 @@
 {
   "release-type": "simple",
   "package-name": "field-house",
-  "version-file": "VERSION",
   "changelog-path": "CHANGELOG.md",
   "include-component-in-tag": false,
-  "pull-request-title-pattern": "chore: release ${version}"
+  "pull-request-title-pattern": "chore: release ${version}",
+  "extra-files": [
+    {
+      "type": "generic",
+      "path": "VERSION"
+    }
+  ]
 }

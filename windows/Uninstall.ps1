@@ -61,12 +61,12 @@ Remove-Item -Path $DatosApp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Success "Borrado: $DatosApp"
 
 Write-Host ""
-$confirmConfig = Read-Host "¿Borrar también la configuración (ciudad, franjas horarias) en ${ConfigDir}? [s/N]"
+$confirmConfig = Read-Host "¿Borrar también la configuración (franjas horarias) en ${ConfigDir}? [s/N]"
 if ($confirmConfig -match '^[sSyY]$') {
     Remove-Item -Path $ConfigDir -Recurse -Force -ErrorAction SilentlyContinue
     Write-Success "Configuración borrada."
 } else {
-    Write-Warn "Se conservó $ConfigDir. Si reinstalás más adelante, tu ciudad y franjas horarias van a seguir ahí."
+    Write-Warn "Se conservó $ConfigDir. Si reinstalás más adelante, tus franjas horarias van a seguir ahí (la última ubicación detectada no se conserva: su caché vive junto al programa, que ya se borró)."
 }
 
 Write-Host ""

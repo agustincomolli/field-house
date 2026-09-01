@@ -13,7 +13,7 @@ Automatically changes your desktop wallpaper — on **XFCE** (Linux Mint XFCE, X
 - 🕐 **Fixed, configurable time slots**: sunrise, midday, sunset, and night, with whatever schedule you define (**or automatic, based on actual sunrise/sunset**, chosen during installation).
 - 🌧️ **Real-time weather**: if it's overcast or raining, uses a different image depending on the time of day (daytime, sunset, or night).
 - 🎨 **Crossfade transition** between one wallpaper and the next (Linux only, optional, requires ImageMagick).
-- 📍 **Automatic location detection** during installation, with user confirmation.
+- 📍 **Fully automatic location**: detected by IP on every startup, no user configuration needed; if the network isn't available at some point, the last known location is used instead.
 - ⚙️ **No admin/sudo installation**, everything lives in your user's standard directories (XDG Base Directory on Linux, `%LOCALAPPDATA%`/`%APPDATA%` on Windows).
 - 🔁 **Automatic execution** (systemd timer on Linux, Scheduled Tasks on Windows), hourly + login correction, no manual setup.
 - 🖥️ **Multi-monitor**: updates the wallpaper on every monitor and workspace.
@@ -33,11 +33,10 @@ chmod +x ./install.sh
 
 The installer will:
 
-1. Automatically detect your location (by IP) and ask you to confirm it, or let you type it manually if you prefer.
-2. Ask whether you want **fixed** times (e.g. sunrise 06:00 → night 20:00, always the same) or **automatic** times based on the actual sunrise/sunset in your city.
-3. Copy the program and images to `~/.local/share/field-house`.
-4. Generate your configuration at `~/.config/field-house/config.conf`.
-5. Enable the `systemd` timers so the wallpaper updates on its own.
+1. Ask whether you want **fixed** times (e.g. sunrise 06:00 → night 20:00, always the same) or **automatic** times based on the actual sunrise/sunset at your location (detected automatically by IP on every run, no configuration needed).
+2. Copy the program and images to `~/.local/share/field-house`.
+3. Generate your configuration at `~/.config/field-house/config.conf`.
+4. Enable the `systemd` timers so the wallpaper updates on its own.
 
 > ℹ️ **Reinstalling backs up the previous install by default.** If you already have a previous install, `install.sh` detects it and, after confirming, moves the program, images (customized ones included), configuration, and logs to a `.bak.TIMESTAMP` copy before installing the new version. Use `./install.sh --no-backup` if you'd rather delete it directly without a backup. More detail in [INSTALLATION.en.md](INSTALLATION.en.md#reinstalling--updating).
 
@@ -70,7 +69,7 @@ systemctl --user status field-house.timer
 # View the log
 tail -f ~/.local/state/field-house/log.txt
 
-# Edit your city or the time-slot schedule
+# Edit the time-slot schedule (location isn't edited: it's automatic)
 nano ~/.config/field-house/config.conf
 ```
 
@@ -98,11 +97,10 @@ cd field-house\windows
 
 The installer will:
 
-1. Automatically detect your location (by IP) and ask you to confirm it, or let you type it manually if you prefer.
-2. Ask whether you want **fixed** times or **automatic** times based on the actual sunrise/sunset in your city (same options as on Linux).
-3. Compile the engine (`FieldHouseEngine.exe`) with `csc.exe` — the C# compiler bundled with Windows 10/11, nothing extra to install — and copy the program and images to `%LOCALAPPDATA%\FieldHouse`.
-4. Generate your configuration at `%APPDATA%\FieldHouse\config.json`.
-5. Register two Scheduled Tasks: one that runs hourly, and one that runs at login.
+1. Ask whether you want **fixed** times or **automatic** times based on the actual sunrise/sunset at your location (detected automatically by IP on every run, same behavior as on Linux).
+2. Compile the engine (`FieldHouseEngine.exe`) with `csc.exe` — the C# compiler bundled with Windows 10/11, nothing extra to install — and copy the program and images to `%LOCALAPPDATA%\FieldHouse`.
+3. Generate your configuration at `%APPDATA%\FieldHouse\config.json`.
+4. Register two Scheduled Tasks: one that runs hourly, and one that runs at login.
 
 > ℹ️ **Reinstalling backs up the previous install by default.** Same as on Linux: if you already have a previous install, `Install.ps1` detects it and, after confirming, moves the program, customized images, and configuration to a `.bak.TIMESTAMP` copy before installing the new one. Use `.\Install.cmd -NoBackup` (or `powershell -ExecutionPolicy Bypass -File .\Install.ps1 -NoBackup`) if you'd rather delete it directly without a backup.
 
@@ -123,13 +121,14 @@ Get-ScheduledTask -TaskName 'FieldHouseWallpaper', 'FieldHouseWallpaperLogin'
 # Full help
 & "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --help
 
-# Reconfigure city, time mode, and time slots interactively
+# Reconfigure time mode and time slots interactively
 & "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --config
 
 # View the log
 Get-Content "$env:LOCALAPPDATA\FieldHouse\state\log.txt" -Tail 20 -Wait
 
-# Edit your city or the time-slot schedule by hand (alternative to --config)
+# Edit the time-slot schedule by hand (alternative to --config; location
+# isn't edited: it's automatic)
 notepad "$env:APPDATA\FieldHouse\config.json"
 ```
 

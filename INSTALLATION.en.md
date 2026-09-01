@@ -66,7 +66,6 @@ cp fondos/*.jpg ~/.local/share/field-house/fondos/
 mkdir -p ~/.config/field-house
 cat << 'EOF' > ~/.config/field-house/config.conf
 CARPETA_FONDOS="$HOME/.local/share/field-house/fondos"
-CIUDAD="CanuelasAR"
 MODO_HORARIOS="fijo"
 HORA_INICIO_AMANECER="06:00"
 HORA_INICIO_MEDIODIA="10:00"
@@ -89,7 +88,7 @@ systemctl --user enable --now field-house.timer
 systemctl --user enable field-house-login.service
 ```
 
-Replace `CIUDAD="CanuelasAR"` with your own city (no spaces or accents; you can test what wttr.in recognizes with `curl "https://wttr.in/YourCity?format=%C"`). Note that missing values in an older `config.conf` fall back to the script's defaults, so adding new variables doesn't break existing installs.
+Location isn't configured here: it's detected automatically by IP on every run (see the "Location" section below). Note that missing values in an older `config.conf` fall back to the script's defaults, so adding new variables doesn't break existing installs.
 
 ## Reinstalling / updating
 
@@ -109,7 +108,7 @@ Other `install.sh` flags:
 ./install.sh --version    # installer version
 ```
 
-> Note: the config keys themselves (`CARPETA_FONDOS`, `CIUDAD`, `HORA_INICIO_AMANECER`, etc.) stay in Spanish, since they're read directly by the script. Only the documentation is translated.
+> Note: the config keys themselves (`CARPETA_FONDOS`, `MODO_HORARIOS`, `HORA_INICIO_AMANECER`, etc.) stay in Spanish, since they're read directly by the script. Only the documentation is translated.
 
 ## How each part works
 
@@ -124,7 +123,7 @@ The script uses time blocks to decide which wallpaper applies. There are two mod
   - Sunset: `15:00` → `20:00`
   - Night: `20:00` → `06:00` (next day)
 
-- **Automatic** (`MODO_HORARIOS="auto"`): the slots are computed from the *actual* sunrise/sunset in your city (see the next subsection).
+- **Automatic** (`MODO_HORARIOS="auto"`): the slots are computed from the *actual* sunrise/sunset at your location, detected automatically (see the next subsection).
 
 In both modes the boundaries can be adjusted in `config.conf`: in fixed mode the `HORA_INICIO_AMANECER`, `HORA_INICIO_MEDIODIA`, `HORA_INICIO_ATARDECER`, `HORA_INICIO_NOCHE` variables are the ones that matter; in auto mode they act as fallback when the sun query fails.
 
@@ -132,35 +131,43 @@ In both modes the boundaries can be adjusted in `config.conf`: in fixed mode the
 
 #### Automatic mode (MODO_HORARIOS="auto")
 
-On each run (with a daily cache, to be gentle to the API), the script queries `wttr.in/CITY?format=j1` and extracts the day's `sunrise` and `sunset`:
+On each run (with a daily cache, to be gentle to the API), the script queries MET Norway's official **Sunrise 3.0** API (`api.met.no/weatherapi/sunrise/3.0/sun`) with the detected location's coordinates, and extracts the day's `sunrise` and `sunset`:
 
 - **Sunrise** = actual sunrise time.
 - **Sunset** = actual sunset time.
 - **Midday** = the exact midpoint between sunrise and sunset.
 - **Night** = sunset + 2 hours (once it's fully dark).
 
-The result is saved to `~/.local/state/field-house/horarios-sol.cache` and reused throughout the day (requeried when the date changes). If the query fails (no internet, invalid city), the script logs a notice and falls back to the fixed times in `config.conf`.
+The result is saved to `~/.local/state/field-house/horarios-sol.cache` and reused throughout the day (requeried when the date changes). If the query fails (no internet, no location available), the script logs a notice and falls back to the fixed times in `config.conf`.
 
-> ⚠️ **Time zone.** The calculation assumes your machine's clock is in the same time zone as `CIUDAD` (the normal case: you set the city where you live). If the city were in a different time zone than your clock, the slots wouldn't match the expected wallpaper; in that case use fixed mode or adjust the system time zone.
+> ⚠️ **Time zone.** The calculation assumes your machine's clock is in the same time zone as your actual location (the normal case). The API returns the time already adjusted to the queried location's time zone, so if you travel and your clock doesn't update along with the detected location, the slots might not match the expected wallpaper; in that case use fixed mode or adjust the system time zone.
+
+### Location
+
+Location isn't configured: it's detected automatically by IP on every run, using the free `ip-api.com` API. There's no installation step that asks for it, and no field in `config.conf` to edit it.
+
+- **Refreshed on every `--reboot`** (login), with the same retry mechanism as the weather query (see below): if the network isn't ready yet, it retries every `ESPERA_REINTENTO_CLIMA` seconds up to `REINTENTOS_CLIMA_INICIAL` times.
+- **The result is cached in `~/.local/state/field-house/ubicacion.cache`, with no time-based expiration.** This is different from the weather and sun-schedule caches (which expire by TTL or by day): here, if `ip-api.com` doesn't respond, the last known location keeps being used regardless of its age, instead of ending up with no location at all. The reasoning is that a laptop doesn't typically change city from one day to the next, so a location from a few days ago is still far more useful than none. The cache only updates when the query actually succeeds.
+- **Location is only unavailable** if there was never a successful geolocation (fresh install, no prior cache) and the current query also fails — typically, a freshly done install with no internet connection yet. In that case, that run uses fixed times and no weather is available, same as with any other network failure; it resolves itself as soon as there's connectivity.
 
 ### Weather
 
-On every run, the script queries `wttr.in/YOUR_CITY?format=%C` (just the weather condition, no extra data). The query uses a short timeout (`--connect-timeout 2 --max-time 6`): it never waits longer than 6 seconds total, and doesn't hang on DNS. Overcast weather and rain are handled as separate conditions and use different images:
+On every run, the script queries MET Norway's official **Locationforecast 2.0 (compact)** API (`api.met.no/weatherapi/locationforecast/2.0/compact`) with the detected location's coordinates, and extracts the `symbol_code` of the nearest forecast (`next_1_hours`, falling back to `next_6_hours`). The query uses a short timeout (`--connect-timeout 2 --max-time 6`): it never waits longer than 6 seconds total, and doesn't hang on DNS. Overcast weather and rain are handled as separate conditions and use different images:
 
-- **Overcast** (`overcast`, `cloudy`), the "base" wallpaper for the current time slot is replaced with the matching overcast wallpaper:
+- **Overcast** (`cloudy`, `fair`, `partlycloudy`), the "base" wallpaper for the current time slot is replaced with the matching overcast wallpaper:
   - Overcast sunrise or midday → `nublado-dia.jpg`
   - Overcast sunset → `nublado-dia.jpg` (there's still daylight; there's no separate sunset version)
   - Overcast night → `nublado-noche.jpg`
-- **Rain** (`rain`, `drizzle`, `shower`, `thunder`, `mist`, `fog`), replaced with the matching rainy wallpaper:
+- **Rain** (`rain`, `sleet`, `snow`, `thunder`, `fog`), replaced with the matching rainy wallpaper:
   - Rainy sunrise or midday → `lluvia-dia.jpg`
   - Rainy sunset → `lluvia-atardecer.jpg`
   - Rainy night → `lluvia-noche.jpg`
 
-If the query fails (no internet, timeout exceeded, invalid city), the base wallpaper for the time slot is used without attempting rain or overcast, and it's logged.
+If the query fails (no internet, timeout exceeded, no location available), the base wallpaper for the time slot is used without attempting rain or overcast, and it's logged.
 
-**Weather cache:** since the query is a network call, the result is saved to `~/.local/state/field-house/clima.cache` and reused for `TTL_CACHE_CLIMA` seconds (10 minutes by default). This avoids redundant queries when the hourly timer and the login service fire almost at the same time — which, in turn, is respectful of the free wttr.in service.
+**Weather cache:** since the query is a network call, the result is saved to `~/.local/state/field-house/clima.cache` and reused for `TTL_CACHE_CLIMA` seconds (10 minutes by default). This avoids redundant queries when the hourly timer and the login service fire almost at the same time — which, in turn, respects met.no's fair-use policy.
 
-**Retry at login:** when the computer boots, the network (especially Wi-Fi) can take a while to come up, sometimes longer than the initial wait from `ESPERA_INICIAL_SEGUNDOS`. So, on the login run (`--reboot` flag), if the query fails the base wallpaper for the time slot is applied right away and the weather is retried every `ESPERA_REINTENTO_CLIMA` seconds (60s by default) up to `REINTENTOS_CLIMA_INICIAL` times (3 by default). If a retry succeeds, the wallpaper crossfades to the weather version; if they run out, the base wallpaper stays until the next hourly trigger. Regular runs (the hourly timer) don't retry: a failure is left for the next hour.
+**Retry at login:** when the computer boots, the network (especially Wi-Fi) can take a while to come up, sometimes longer than the initial wait from `ESPERA_INICIAL_SEGUNDOS`. So, on the login run (`--reboot` flag), if geolocation or the weather query fail, the base wallpaper for the time slot is applied right away and retried every `ESPERA_REINTENTO_CLIMA` seconds (60s by default) up to `REINTENTOS_CLIMA_INICIAL` times (3 by default) — the same retry mechanism covers both queries, since both depend on the network being ready. If a retry succeeds, the wallpaper crossfades to the weather version; if they run out, the base wallpaper stays until the next hourly trigger. Regular runs (the hourly timer) don't retry: a failure is left for the next hour.
 
 ### Crossfade transition
 
@@ -200,7 +207,7 @@ The script loops through every `last-image` xfconf property (one per monitor/wor
 The design goal is to **degrade gracefully but fail clearly**: the script survives without network, without ImageMagick, or without a ready XFCE session, but when something is misconfigured it announces it clearly and early, instead of producing weird wallpapers or silent failures.
 
 - **Dependencies checked at startup.** Before anything else, it verifies that `curl`, `xfconf-query` (only for real runs, not `--dry-run`), `awk`, `grep`, `tr`, `seq`, `head`, and `cut` exist. If any is missing, the script exits immediately with a logged message. ImageMagick (`convert`/`identify`) is optional: it only produces a notice.
-- **Validated configuration.** After loading `config.conf` it validates: `CIUDAD` (letters/numbers and `. , _ -` only, so the wttr.in URL doesn't break), `MODO_HORARIOS` (`fijo` or `auto`), the `HORA_INICIO_*` values (`HH:MM` format), `PASOS_TRANSICION`, `PAUSA_ENTRE_PASOS`, the remaining numeric values, and that `CARPETA_FONDOS` is a directory. An invalid value stops the run with a message saying exactly which variable is wrong and how to fix it.
+- **Validated configuration.** After loading `config.conf` it validates: `MODO_HORARIOS` (`fijo` or `auto`), the `HORA_INICIO_*` values (`HH:MM` format), `PASOS_TRANSICION`, `PAUSA_ENTRE_PASOS`, the remaining numeric values, and that `CARPETA_FONDOS` is a directory. An invalid value stops the run with a message saying exactly which variable is wrong and how to fix it.
 - **Safe, self-cleaning temp files.** The transition frames go to a `mktemp` directory (private permissions), and a `trap` removes it on exit — normal or interrupted. Old versions could leave orphan directories in `/tmp` if the script died halfway; that no longer happens.
 - **No silent xfconf failures.** If any `last-image` property fails to be set, failures are accumulated and logged (with the affected property names). If there are no `last-image` properties at all (fresh XFCE profile), it's reported explicitly.
 - **Rotated log.** Each line is a single run (24/day), so it grows slowly, but the log is still rotated to `log.txt.1` once it exceeds `MAX_LOG_BYTES` (1 MiB by default), keeping only the most recent copy.
@@ -218,9 +225,9 @@ The project has two layers of automated verification, one per platform, running 
 | `bash -n` | Syntax (without executing) |
 | `bats tests/change_wallpaper.bats` | Unit tests for pure functions: time conversion, `validar_configuracion`, and the time-slot + weather decision logic |
 | Fixed-mode smoke test | `--dry-run` with minimal config |
-| Auto-mode smoke test | `--dry-run` with `MODO_HORARIOS=auto` against real wttr.in (runner connectivity) |
+| Auto-mode smoke test | `--dry-run` with `MODO_HORARIOS=auto` against the real met.no/ip-api.com APIs (runner connectivity) |
 | Full-config smoke test | `--dry-run` with every new variable explicit in `config.conf` |
-| Invalid-config smoke test | Confirms an invalid `CIUDAD` makes the script fail (exit != 0) |
+| Invalid-config smoke test | Confirms an invalid `MODO_HORARIOS` makes the script fail (exit != 0) |
 
 To run the unit tests on your machine before a PR:
 
@@ -239,8 +246,8 @@ The suite uses a guard (`FIELD_HOUSE_SOURCE_ONLY`) that tells `bin/change_wallpa
 | `PSScriptAnalyzer` | Lint over `Install.ps1`, `Uninstall.ps1`, and `Build-Engine.ps1` (`Warning`/`Error` severity; `PSAvoidUsingWriteHost` is excluded on purpose, see the comment in the workflow) |
 | Engine compilation | `csc.exe` compiles `FieldHouseEngine.cs` on the runner (same step `Install.ps1` performs); a compilation error fails the job |
 | Fixed-mode smoke test | `FieldHouseEngine.exe --dry-run` with minimal config, plus `--version` and `--help` |
-| Auto-mode smoke test | `FieldHouseEngine.exe --dry-run` with `ModoHorarios: "auto"` against real wttr.in |
-| Invalid-config smoke test | Confirms an invalid `Ciudad` makes the executable fail |
+| Auto-mode smoke test | `FieldHouseEngine.exe --dry-run` with `ModoHorarios: "auto"` against the real met.no/ip-api.com APIs |
+| Invalid-config smoke test | Confirms an invalid `ModoHorarios` makes the executable fail |
 
 To run the lint locally before a PR:
 
@@ -262,7 +269,7 @@ To compile the engine locally and run the smoke tests by hand:
 
 ## Windows: differences from Linux
 
-The Windows version (`windows/engine/FieldHouseEngine.cs`, `Install.ps1`, `Uninstall.ps1`) replicates the same business logic as the Linux version — time slots, `auto` mode based on the sun, weather with caching and retries, configuration validation, log rotation — with the same conceptual names (`config.json` keys are the PascalCase form of the same `config.conf` variables: `Ciudad` ↔ `CIUDAD`, `ModoHorarios` ↔ `MODO_HORARIOS`, etc.). Everything in the "Time slots", "Weather", and "Validation and robustness" sections above applies equally on Windows; this section documents only what **differs** because it's a different platform.
+The Windows version (`windows/engine/FieldHouseEngine.cs`, `Install.ps1`, `Uninstall.ps1`) replicates the same business logic as the Linux version — time slots, `auto` mode based on the sun, auto-detected location, weather with caching and retries, configuration validation, log rotation — with the same conceptual names (`config.json` keys are the PascalCase form of the same `config.conf` variables: `ModoHorarios` ↔ `MODO_HORARIOS`, `TtlCacheClima` ↔ `TTL_CACHE_CLIMA`, etc.). Everything in the "Location", "Time slots", "Weather", and "Validation and robustness" sections above applies equally on Windows; this section documents only what **differs** because it's a different platform.
 
 Unlike Linux (where the engine is a bash script interpreted by `bash` on every run), on Windows the engine **is compiled once, at install time**: `Install.ps1` calls `windows\engine\Build-Engine.ps1`, which in turn calls `csc.exe` (the C# compiler bundled with .NET Framework in Windows 10/11 — no need to install the .NET SDK or Visual Studio) to produce `%LOCALAPPDATA%\FieldHouse\bin\FieldHouseEngine.exe`. From then on, both the Scheduled Tasks and a manual invocation run that binary directly; it isn't recompiled again until the next install or reinstall.
 
@@ -277,13 +284,13 @@ Unlike Linux (where the engine is a bash script interpreted by `bash` on every r
 | Guided reconfiguration | — (edit `config.conf` by hand) | `FieldHouseEngine.exe --config` (interactive console mode) |
 | Program and images | `~/.local/share/field-house/` | `%LOCALAPPDATA%\FieldHouse\` |
 | Logs and cache | `~/.local/state/field-house/` (separated per XDG) | `%LOCALAPPDATA%\FieldHouse\state\` (Windows doesn't separate this as strictly) |
-| HTTP queries | `curl` | `HttpWebRequest` (weather and sun schedule, both via wttr.in) |
+| HTTP queries | `curl` | `HttpWebRequest` (met.no for weather and sun schedule, ip-api.com for location) |
 | JSON parsing | — (config.conf is plain text, not JSON) | Custom JSON parser (`MiniJson`, no external dependencies — see note below) |
 | Crossfade transition | Yes, with ImageMagick (optional) | Not available; the change is instant |
 | Accepted image formats | JPG (the ones bundled with the project) | JPG (natively supported by `SystemParametersInfo` since Windows 7) |
 | Console window during automatic runs | Not applicable (no console concept in a `systemd` service) | None: the `.exe` is compiled as `/target:winexe`, so the Scheduled Task never draws any window |
 
-> **Why a custom JSON parser (`MiniJson`) instead of `System.Text.Json`?** `System.Text.Json` only comes bundled by default starting with .NET Framework 4.7.2; on earlier versions it would require installing the matching NuGet package. Since the project compiles with a single `csc.exe` invocation (no `dotnet restore`, no NuGet package management), a minimal single-file JSON parser/writer was used instead — enough for the flat format `config.json` uses and for wttr.in's response.
+> **Why a custom JSON parser (`MiniJson`) instead of `System.Text.Json`?** `System.Text.Json` only comes bundled by default starting with .NET Framework 4.7.2; on earlier versions it would require installing the matching NuGet package. Since the project compiles with a single `csc.exe` invocation (no `dotnet restore`, no NuGet package management), a minimal single-file JSON parser/writer was used instead — enough for the flat format `config.json` uses and for the met.no/ip-api.com API responses.
 
 ### PowerShell execution policy
 
@@ -337,16 +344,16 @@ Confirm the user session bus is active: `systemctl --user status` with no argume
 systemd user services should inherit `DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` from the graphical session, but just in case, the script and the `.service` files set them explicitly. If your session isn't `:0`, adjust the `Environment=DISPLAY=:0` line in the `.service` files (in `~/.config/systemd/user/`) and run `systemctl --user daemon-reload`.
 
 **Weather isn't detected correctly:**
-Try `curl "https://wttr.in/YourCity?format=%C"` directly in the terminal to see the exact text it returns, and adjust the keyword lists in `bin/change_wallpaper.sh` (overcast: `overcast|cloudy`; rain: `rain|drizzle|shower|thunder|mist|fog`) if your weather returns a different word. Remember the result is cached for 10 minutes (`TTL_CACHE_CLIMA`); if you change your city or want to verify a change, delete `~/.local/state/field-house/clima.cache` and run the script again.
+Try `curl "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=YOUR_LAT&lon=YOUR_LON" -H "User-Agent: test"` directly in the terminal (with your actual coordinates, visible in `~/.local/state/field-house/ubicacion.cache`) to see the `symbol_code` it returns, and adjust the keyword lists in `bin/change_wallpaper.sh` (overcast: `cloudy|fair|partlycloudy`; rain: `rain|sleet|snow|thunder|fog`) if your weather returns a different symbol. Remember the result is cached for 10 minutes (`TTL_CACHE_CLIMA`); if you want to verify a change, delete `~/.local/state/field-house/clima.cache` and run the script again.
 
 **The log says `AVISO: no se pudo obtener la salida/puesta del sol`:**
-Happens with `MODO_HORARIOS="auto"` when the wttr.in query (`j1` format) fails or your city doesn't resolve. Not serious: the script uses the fixed times from `config.conf` for that run and tries again next time. Check your internet or try `curl "https://wttr.in/YourCity?format=j1"`.
+Happens with `MODO_HORARIOS="auto"` when the met.no Sunrise 3.0 API query fails or no location is available. Not serious: the script uses the fixed times from `config.conf` for that run and tries again next time. Check your internet or try `curl "https://api.met.no/weatherapi/sunrise/3.0/sun?lat=YOUR_LAT&lon=YOUR_LON&date=$(date +%F)" -H "User-Agent: test"` with your actual coordinates.
 
 **I want to switch from fixed hours to automatic (or back):**
 Edit `MODO_HORARIOS` in `~/.config/field-house/config.conf` (`"fijo"` or `"auto"`) and run `~/.local/share/field-house/bin/change_wallpaper.sh` (or wait for the next timer trigger).
 
-**The log says `ERROR: CIUDAD inválida` (or `HORA_INICIO_... inválida`):**
-The script validates the configuration before applying anything. Edit the value named in the message in `~/.config/field-house/config.conf` with the required format (city with no spaces or accents; times as `HH:MM` in 24-hour format) and run the script again.
+**The log says `ERROR: MODO_HORARIOS inválido` (or `HORA_INICIO_... inválida`):**
+The script validates the configuration before applying anything. Edit the value named in the message in `~/.config/field-house/config.conf` with the required format (`MODO_HORARIOS` must be `fijo` or `auto`; times as `HH:MM` in 24-hour format) and run the script again.
 
 **The log says `ERROR: faltan comandos requeridos`:**
 A system binary is missing. The message lists which ones. Install `curl` (or whichever is missing, e.g. with `sudo apt install <package>`).
@@ -378,15 +385,15 @@ Confirm `field-house-login.service` is enabled: `systemctl --user is-enabled fie
 **I want it to check more often (or less):**
 Edit `OnCalendar=hourly` in `~/.config/systemd/user/field-house.timer`, for example to `OnCalendar=*:0/30` for every 30 minutes. Then run `systemctl --user daemon-reload && systemctl --user restart field-house.timer`.
 
-**The location automatically detected during install wasn't correct:**
-The installer uses IP-based geolocation, which can be off by several kilometers depending on your internet provider. Just edit `CIUDAD` in `~/.config/field-house/config.conf` with the right value.
+**The automatically detected location isn't correct:**
+Location is detected via IP geolocation (`ip-api.com`), which can be off by several kilometers depending on your internet provider — this is normal, especially if your ISP assigns the IP from another city. There's no way to correct it by hand (there's no location field in `config.conf`: it's always auto-detected). If it noticeably affects automatic time mode or the weather, use `MODO_HORARIOS="fijo"` in the meantime.
 
 ## Troubleshooting (Windows)
 
 **`Install.ps1` or `Uninstall.ps1` won't run, PowerShell shows an execution-policy error:**
 That's Windows's default block for `.ps1` scripts (not a bug in the project). The simplest fix is to use `Install.cmd` / `Uninstall.cmd` instead of the `.ps1` directly — they already have the bypass built in. If you'd rather run the `.ps1` by hand: `powershell -ExecutionPolicy Bypass -File .\Install.ps1` (or `.\Uninstall.ps1`, whichever you're running). Neither approach changes your execution policy permanently.
 
-**`Install.ps1` fails at the "2/4 - Installing files" step with a `csc.exe` error:**
+**`Install.ps1` fails at the "1/3 - Installing files" step with a `csc.exe` error:**
 The installer compiles the engine (`FieldHouseEngine.exe`) with `csc.exe`, the C# compiler bundled with Windows 10/11 as part of .NET Framework. If it isn't found at either expected path (`%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe` or its 32-bit variant), it's likely a trimmed-down Windows edition, or an organizational policy that removed that component. You can check whether it's present with: `Test-Path "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"`. If it's missing, .NET Framework 4.x can usually be reinstalled from Settings → Apps → Optional features.
 
 **The tasks don't run / `Get-ScheduledTask` doesn't show them:**
@@ -396,13 +403,13 @@ Confirm the registration succeeded without errors during install (check `Install
 Run `& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe"` directly and confirm it doesn't error out. If it works by hand but not via the scheduled task, check the "History" tab of `FieldHouseWallpaper` in Task Scheduler (`taskschd.msc`) — that's where Windows logs whether the task fired and its exit code.
 
 **Weather isn't detected correctly:**
-Try `Invoke-WebRequest "https://wttr.in/YourCity?format=%C"` in PowerShell and check `.Content` for the exact text it returns. The same keyword criteria as on Linux apply (overcast: `overcast|cloudy`; rain: `rain|drizzle|shower|thunder|mist|fog`), adjustable in `windows/engine/FieldHouseEngine.cs` (the `ClimaCoincide` method, requires recompiling with `Build-Engine.ps1` after the change). The weather cache lives at `%LOCALAPPDATA%\FieldHouse\state\clima.cache.json`; delete it if you need to force a fresh query.
+Try `Invoke-WebRequest "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=YOUR_LAT&lon=YOUR_LON" -Headers @{"User-Agent"="test"}` in PowerShell (with your actual coordinates, visible in `%LOCALAPPDATA%\FieldHouse\state\ubicacion.cache.json`) and check `.Content` for the `symbol_code` it returns. The same keyword criteria as on Linux apply (overcast: `cloudy|fair|partlycloudy`; rain: `rain|sleet|snow|thunder|fog`), adjustable in `windows/engine/FieldHouseEngine.cs` (the `ClimaCoincide` method, requires recompiling with `Build-Engine.ps1` after the change). The weather cache lives at `%LOCALAPPDATA%\FieldHouse\state\clima.cache.json`; delete it if you need to force a fresh query.
 
 **The log says `AVISO: no se pudo obtener la salida/puesta del sol`:**
-Same as on Linux: happens with `"ModoHorarios": "auto"` when the wttr.in query fails or your city doesn't resolve. The engine uses the fixed times from `config.json` for that run.
+Same as on Linux: happens with `"ModoHorarios": "auto"` when the met.no Sunrise 3.0 API query fails or no location is available. The engine uses the fixed times from `config.json` for that run.
 
-**The log says `ERROR: Ciudad inválida` (or `HoraInicio... inválida`):**
-Run `& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --config` to reconfigure step by step with validation as you go, or edit the relevant field by hand in `%APPDATA%\FieldHouse\config.json` with the format the message asks for (city with no spaces or accents; times as `HH:MM` in 24-hour format) and run the engine again.
+**The log says `ERROR: ModoHorarios inválido` (or `HoraInicio... inválida`):**
+Run `& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --config` to reconfigure step by step with validation as you go, or edit the relevant field by hand in `%APPDATA%\FieldHouse\config.json` with the format the message asks for (`ModoHorarios` must be `"fijo"` or `"auto"`; times as `HH:MM` in 24-hour format) and run the engine again.
 
 **I want to see which wallpaper would be applied without waiting for the next hour:**
 `& "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --dry-run`. It prints the time slot, weather, and chosen wallpaper without touching anything, without writing logs.
@@ -413,8 +420,8 @@ Same as on Linux: the login task retries the weather according to `EsperaReinten
 **The wallpaper changes but looks "stretched" or has black borders:**
 That's Windows's image-fit setting (Settings → Personalization → Background → "Choose a fit"), not something this project controls. The 9 images are 16:9; for them to look right on a monitor with a different aspect ratio, choose "Fill" or "Fit" in that Windows setting (it's a one-time setting, no need to repeat it).
 
-**The location automatically detected during install wasn't correct:**
-Same as on Linux: it's IP-based geolocation, it can be off. Run `--config` to fix it step by step, or edit `Ciudad` by hand in `%APPDATA%\FieldHouse\config.json`.
+**The automatically detected location isn't correct:**
+Same as on Linux: it's IP-based geolocation (`ip-api.com`), it can be off by several kilometers depending on your internet provider. There's no way to correct it by hand (there's no location field in `config.json`: it's always auto-detected, on every run). If it's noticeably off, use `"ModoHorarios": "fijo"` in the meantime.
 
 **I want to uninstall and can't find `Uninstall.ps1`:**
 It's in the same `windows\` folder of the repository you cloned — if you deleted that folder, you can remove the tasks by hand with `Unregister-ScheduledTask -TaskName 'FieldHouseWallpaper','FieldHouseWallpaperLogin' -Confirm:$false` and then delete `%LOCALAPPDATA%\FieldHouse` and `%APPDATA%\FieldHouse`.

@@ -13,7 +13,7 @@ Cambia automáticamente el fondo de pantalla — de **XFCE** (Linux Mint XFCE, X
 - 🕐 **Franjas horarias fijas y configurables**: amanecer, mediodía, atardecer y noche, con los horarios que vos definas (**o automáticas según la salida/puesta del sol**, elegible durante la instalación).
 - 🌧️ **Clima en tiempo real**: si está nublado o lloviendo, usa una imagen distinta según el momento del día (día, atardecer o noche).
 - 🎨 **Transición de fundido** entre un fondo y el siguiente (solo Linux, opcional, requiere ImageMagick).
-- 📍 **Detección automática de ubicación** durante la instalación, con confirmación del usuario.
+- 📍 **Ubicación totalmente automática**: se detecta por IP en cada arranque, sin que el usuario configure nada; si en algún momento no hay red, se usa la última ubicación conocida.
 - ⚙️ **Instalación sin privilegios de administrador**, todo en las rutas estándar de tu usuario (XDG Base Directory en Linux, `%LOCALAPPDATA%`/`%APPDATA%` en Windows).
 - 🔁 **Ejecución automática** (timer de systemd en Linux, Tareas Programadas en Windows) por hora + corrección al iniciar sesión, sin configurarlo a mano.
 - 🖥️ **Multi-monitor**: actualiza el fondo en todos los monitores y espacios de trabajo.
@@ -33,11 +33,10 @@ chmod +x ./install.sh
 
 El instalador va a:
 
-1. Detectar tu ubicación automáticamente (por IP) y pedirte que la confirmes, o que la ingreses a mano si preferís.
-2. Preguntarte si querés horarios **fijos** (p. ej. amanecer 06:00 → noche 20:00, siempre iguales) o **automáticos** según la salida y puesta real del sol en tu ciudad.
-3. Copiar el programa y las imágenes a `~/.local/share/field-house`.
-4. Generar tu configuración en `~/.config/field-house/config.conf`.
-5. Habilitar los timers de `systemd` para que el fondo se actualice solo.
+1. Preguntarte si querés horarios **fijos** (p. ej. amanecer 06:00 → noche 20:00, siempre iguales) o **automáticos** según la salida y puesta real del sol en tu ubicación (detectada automáticamente por IP en cada ejecución, sin que tengas que configurar nada).
+2. Copiar el programa y las imágenes a `~/.local/share/field-house`.
+3. Generar tu configuración en `~/.config/field-house/config.conf`.
+4. Habilitar los timers de `systemd` para que el fondo se actualice solo.
 
 > ℹ️ **Reinstalar resguarda lo anterior por defecto.** Si ya tenés una instalación previa, `install.sh` la detecta y, tras confirmar, mueve el programa, las imágenes (incluidas las personalizadas), la configuración y los logs a una copia `.bak.FECHAHORA` antes de instalar la versión nueva. Usá `./install.sh --no-backup` si preferís borrarla directamente sin resguardo. Más detalle en [INSTALACION.md](INSTALACION.md#reinstalar--actualizar).
 
@@ -70,7 +69,7 @@ systemctl --user status field-house.timer
 # Ver el log
 tail -f ~/.local/state/field-house/log.txt
 
-# Editar tu ciudad o los horarios de las franjas
+# Editar los horarios de las franjas (la ubicación no se edita: es automática)
 nano ~/.config/field-house/config.conf
 ```
 
@@ -98,11 +97,10 @@ cd field-house\windows
 
 El instalador va a:
 
-1. Detectar tu ubicación automáticamente (por IP) y pedirte que la confirmes, o que la ingreses a mano si preferís.
-2. Preguntarte si querés horarios **fijos** o **automáticos** según la salida y puesta real del sol en tu ciudad (mismas opciones que en Linux).
-3. Compilar el motor (`FieldHouseEngine.exe`) con `csc.exe` — el compilador de C# incluido de fábrica en Windows 10/11, sin instalar nada adicional — y copiar el programa y las imágenes a `%LOCALAPPDATA%\FieldHouse`.
-4. Generar tu configuración en `%APPDATA%\FieldHouse\config.json`.
-5. Registrar dos Tareas Programadas: una que corre cada hora, y otra que corre al iniciar sesión.
+1. Preguntarte si querés horarios **fijos** o **automáticos** según la salida y puesta real del sol en tu ubicación (detectada automáticamente por IP en cada ejecución, mismo comportamiento que en Linux).
+2. Compilar el motor (`FieldHouseEngine.exe`) con `csc.exe` — el compilador de C# incluido de fábrica en Windows 10/11, sin instalar nada adicional — y copiar el programa y las imágenes a `%LOCALAPPDATA%\FieldHouse`.
+3. Generar tu configuración en `%APPDATA%\FieldHouse\config.json`.
+4. Registrar dos Tareas Programadas: una que corre cada hora, y otra que corre al iniciar sesión.
 
 > ℹ️ **Reinstalar resguarda lo anterior por defecto.** Igual que en Linux: si ya tenés una instalación previa, `Install.ps1` la detecta y, tras confirmar, mueve el programa, las imágenes personalizadas y la configuración a una copia `.bak.FECHAHORA` antes de instalar la nueva. Usá `.\Install.cmd -NoBackup` (o `powershell -ExecutionPolicy Bypass -File .\Install.ps1 -NoBackup`) si preferís borrarla directamente sin resguardo.
 
@@ -123,13 +121,14 @@ Get-ScheduledTask -TaskName 'FieldHouseWallpaper', 'FieldHouseWallpaperLogin'
 # Ver la ayuda completa
 & "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --help
 
-# Reconfigurar ciudad, modo de horarios y franjas horarias, paso a paso
+# Reconfigurar modo de horarios y franjas horarias, paso a paso
 & "$env:LOCALAPPDATA\FieldHouse\bin\FieldHouseEngine.exe" --config
 
 # Ver el log
 Get-Content "$env:LOCALAPPDATA\FieldHouse\state\log.txt" -Tail 20 -Wait
 
-# Editar tu ciudad o los horarios de las franjas a mano (alternativa a --config)
+# Editar los horarios de las franjas a mano (alternativa a --config; la
+# ubicación no se edita: es automática)
 notepad "$env:APPDATA\FieldHouse\config.json"
 ```
 

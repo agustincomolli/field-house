@@ -116,7 +116,6 @@ setup() {
 # revisa con valores válidos por defecto. Los tests que prueban un caso
 # inválido puntual sobrescriben solo la variable que quieren romper.
 set_config_valida() {
-    CIUDAD="CanuelasAR"
     MODO_HORARIOS="fijo"
     HORA_INICIO_AMANECER="06:00"
     HORA_INICIO_MEDIODIA="10:00"
@@ -152,29 +151,6 @@ set_config_valida() {
 # ----------------------------------------------------------------------------
 # validar_configuracion — casos inválidos
 # ----------------------------------------------------------------------------
-
-@test "validar_configuracion: rechaza ciudad con espacio" {
-    set_config_valida
-    CIUDAD="Buenos Aires"
-    run validar_configuracion
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"CIUDAD inválida"* ]]
-}
-
-@test "validar_configuracion: rechaza ciudad vacia" {
-    set_config_valida
-    CIUDAD=""
-    run validar_configuracion
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"CIUDAD inválida"* ]]
-}
-
-@test "validar_configuracion: acepta ciudad con guion y punto" {
-    set_config_valida
-    CIUDAD="Port-au-Prince.HT"
-    run validar_configuracion
-    [ "$status" -eq 0 ]
-}
 
 @test "validar_configuracion: rechaza MODO_HORARIOS invalido" {
     set_config_valida
@@ -250,13 +226,14 @@ set_config_valida() {
 @test "validar_configuracion: valida en orden, primer error corta la ejecucion" {
     # Confirma que validar_configuracion no sigue evaluando después del
     # primer error (importante: si TTL_CACHE_CLIMA también estuviera mal,
-    # el mensaje reportado debe ser el de CIUDAD, la primera validación).
+    # el mensaje reportado debe ser el de MODO_HORARIOS, la primera
+    # validación que hace la función).
     set_config_valida
-    CIUDAD="ciudad invalida con espacios"
+    MODO_HORARIOS="siempre"
     TTL_CACHE_CLIMA="no-es-un-numero"
     run validar_configuracion
     [ "$status" -eq 1 ]
-    [[ "$output" == *"CIUDAD inválida"* ]]
+    [[ "$output" == *"MODO_HORARIOS inválido"* ]]
     [[ "$output" != *"TTL_CACHE_CLIMA"* ]]
 }
 
@@ -293,12 +270,12 @@ decidir_fondo_test() {
 
     if [ -z "$clima" ]; then
         : # sin clima disponible, se mantiene el fondo base
-    elif echo "$clima" | grep -qE "overcast|cloudy"; then
+    elif echo "$clima" | grep -qE "cloudy|fair|partlycloudy"; then
         case "$franja_clima" in
             dia|atardecer) fondo="nublado-dia.jpg"; momento="nublado de día" ;;
             noche) fondo="nublado-noche.jpg"; momento="nublado de noche" ;;
         esac
-    elif echo "$clima" | grep -qE "rain|drizzle|shower|thunder|mist|fog"; then
+    elif echo "$clima" | grep -qE "rain|sleet|snow|thunder|fog"; then
         case "$franja_clima" in
             dia) fondo="lluvia-dia.jpg"; momento="lluvia de día" ;;
             atardecer) fondo="lluvia-atardecer.jpg"; momento="lluvia de atardecer" ;;
@@ -346,33 +323,33 @@ decidir_fondo_test() {
     [ "$result" = "amanecer.jpg" ]
 }
 
-@test "clima: overcast de dia usa nublado-dia" {
-    result="$(decidir_fondo_test 660 360 600 900 1200 'partly cloudy')"
+@test "clima: partlycloudy de dia usa nublado-dia" {
+    result="$(decidir_fondo_test 660 360 600 900 1200 'partlycloudy_day')"
     [ "$result" = "nublado-dia.jpg" ]
 }
 
-@test "clima: overcast de noche usa nublado-noche" {
-    result="$(decidir_fondo_test 1320 360 600 900 1200 'overcast')"
+@test "clima: cloudy de noche usa nublado-noche" {
+    result="$(decidir_fondo_test 1320 360 600 900 1200 'cloudy')"
     [ "$result" = "nublado-noche.jpg" ]
 }
 
-@test "clima: overcast de atardecer usa nublado-dia (no hay nublado-atardecer)" {
-    result="$(decidir_fondo_test 960 360 600 900 1200 'cloudy')"
+@test "clima: fair de atardecer usa nublado-dia (no hay nublado-atardecer)" {
+    result="$(decidir_fondo_test 960 360 600 900 1200 'fair_day')"
     [ "$result" = "nublado-dia.jpg" ]
 }
 
 @test "clima: lluvia de dia usa lluvia-dia" {
-    result="$(decidir_fondo_test 660 360 600 900 1200 'light rain')"
+    result="$(decidir_fondo_test 660 360 600 900 1200 'lightrain')"
     [ "$result" = "lluvia-dia.jpg" ]
 }
 
 @test "clima: lluvia de atardecer usa lluvia-atardecer (imagen propia)" {
-    result="$(decidir_fondo_test 960 360 600 900 1200 'heavy rain')"
+    result="$(decidir_fondo_test 960 360 600 900 1200 'heavyrain')"
     [ "$result" = "lluvia-atardecer.jpg" ]
 }
 
 @test "clima: lluvia de noche usa lluvia-noche" {
-    result="$(decidir_fondo_test 1320 360 600 900 1200 'thundery outbreaks')"
+    result="$(decidir_fondo_test 1320 360 600 900 1200 'rainandthunder')"
     [ "$result" = "lluvia-noche.jpg" ]
 }
 
@@ -381,8 +358,18 @@ decidir_fondo_test() {
     [ "$result" = "lluvia-dia.jpg" ]
 }
 
+@test "clima: nieve tambien se trata como lluvia" {
+    result="$(decidir_fondo_test 660 360 600 900 1200 'lightsnow')"
+    [ "$result" = "lluvia-dia.jpg" ]
+}
+
+@test "clima: aguanieve (sleet) tambien se trata como lluvia" {
+    result="$(decidir_fondo_test 660 360 600 900 1200 'sleet')"
+    [ "$result" = "lluvia-dia.jpg" ]
+}
+
 @test "clima: cielo despejado no reemplaza el fondo base" {
-    result="$(decidir_fondo_test 660 360 600 900 1200 'sunny')"
+    result="$(decidir_fondo_test 660 360 600 900 1200 'clearsky_day')"
     [ "$result" = "mediodia.jpg" ]
 }
 
@@ -395,7 +382,7 @@ decidir_fondo_test() {
 # consultar_clima — contrato de normalización (sin red real)
 # ----------------------------------------------------------------------------
 # consultar_clima() llama a curl de verdad; no se testea acá su integración
-# con wttr.in (eso corresponde a un test de integración con red, fuera del
+# con api.met.no (eso corresponde a un test de integración con red, fuera del
 # alcance de esta suite). Lo que sí se puede fijar sin red es el contrato de
 # que, cuando SÍ hay una respuesta, se normaliza a minúsculas antes de
 # devolverla — que es la precondición de la que depende toda la lógica de
@@ -409,7 +396,8 @@ decidir_fondo_test() {
     # "return 0" temprano, sin necesitar red. No se mockea curl: si el
     # código intentara igual llamarlo y no hubiera red en el entorno de CI,
     # este test lo notaría porque tardaría el timeout completo (8s) en vez
-    # de responder al instante.
+    # de responder al instante. lat/lon son irrelevantes en este camino (no
+    # se llegan a usar), pero la función los exige como argumentos.
     MODO_DRY="no"
     CACHE_CLIMA="$BATS_TEST_TMPDIR/clima.cache"
     printf 'TS=%s\nCLIMA=cloudy\n' "$(date +%s)" > "$CACHE_CLIMA"
@@ -420,9 +408,77 @@ decidir_fondo_test() {
         CACHE_CLIMA="'"$CACHE_CLIMA"'"
         MODO_DRY="no"
         TTL_CACHE_CLIMA="600"
-        consultar_clima
+        consultar_clima "-35.05" "-58.76"
     ')"
     [ "$result" = "cloudy" ]
+}
+
+# ----------------------------------------------------------------------------
+# obtener_ubicacion
+# ----------------------------------------------------------------------------
+# obtener_ubicacion() llama a curl de verdad contra ip-api.com; no se testea
+# acá su integración real con esa API. Lo que sí se puede fijar sin red es
+# el contrato del caché: a diferencia de consultar_clima/consultar_horarios_sol
+# (que cachean por TTL/día), el caché de ubicación NO expira por tiempo y se
+# usa como fallback ante cualquier fallo de red, sin importar su antigüedad
+# (ver el comentario en la función, en change_wallpaper.sh). Para no depender
+# de que haya red real (o de que ip-api.com esté arriba) en el entorno de
+# CI, se reemplaza curl por una función de shell durante estos tests.
+
+@test "obtener_ubicacion: sin cache y sin red disponible, devuelve vacio" {
+    set_config_valida
+    CACHE_UBICACION="$BATS_TEST_TMPDIR/ubicacion-inexistente.cache"
+
+    # obtener_ubicacion hace "return 1" en este caso (sin ubicación
+    # disponible); se agrega "|| true" porque bats trata cualquier exit
+    # no-cero dentro del cuerpo del test (fuera de un `run`) como fallo del
+    # test entero, y acá ese exit 1 es precisamente el comportamiento que se
+    # quiere confirmar, no un error real.
+    result="$(timeout 5 bash -c '
+        export FIELD_HOUSE_SOURCE_ONLY=1
+        source "'"$SCRIPT_UNDER_TEST"'" 2>/dev/null
+        CACHE_UBICACION="'"$CACHE_UBICACION"'"
+        MODO_DRY="no"
+        curl() { return 7; }
+        obtener_ubicacion
+    ' || true)"
+    [ "$result" = "" ]
+}
+
+@test "obtener_ubicacion: sin red pero con cache previo, devuelve la ubicacion cacheada" {
+    set_config_valida
+    CACHE_UBICACION="$BATS_TEST_TMPDIR/ubicacion.cache"
+    printf 'LAT=-35.05\nLON=-58.76\nTS=1700000000\n' > "$CACHE_UBICACION"
+
+    result="$(timeout 5 bash -c '
+        export FIELD_HOUSE_SOURCE_ONLY=1
+        source "'"$SCRIPT_UNDER_TEST"'" 2>/dev/null
+        CACHE_UBICACION="'"$CACHE_UBICACION"'"
+        MODO_DRY="no"
+        curl() { return 7; }
+        obtener_ubicacion
+    ')"
+    [ "$result" = "-35.05 -58.76" ]
+}
+
+@test "obtener_ubicacion: respuesta exitosa de la API actualiza el cache" {
+    set_config_valida
+    CACHE_UBICACION="$BATS_TEST_TMPDIR/ubicacion.cache"
+    # Caché previo con una ubicación distinta, para confirmar que se
+    # sobrescribe con la nueva en vez de conservar la vieja.
+    printf 'LAT=0.0\nLON=0.0\nTS=1\n' > "$CACHE_UBICACION"
+
+    result="$(timeout 5 bash -c '
+        export FIELD_HOUSE_SOURCE_ONLY=1
+        source "'"$SCRIPT_UNDER_TEST"'" 2>/dev/null
+        CACHE_UBICACION="'"$CACHE_UBICACION"'"
+        MODO_DRY="no"
+        curl() { echo "{\"status\":\"success\",\"lat\":-35.05,\"lon\":-58.76}"; }
+        obtener_ubicacion
+    ')"
+    [ "$result" = "-35.05 -58.76" ]
+    grep -q "^LAT=-35.05$" "$CACHE_UBICACION"
+    grep -q "^LON=-58.76$" "$CACHE_UBICACION"
 }
 
 # ============================================================================

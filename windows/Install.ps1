@@ -5,9 +5,10 @@ Install.ps1 — instalador (Windows 10 / 11)
 Versión: ver el archivo VERSION
 
 Instala la app para el usuario actual (sin privilegios de administrador,
-todo en las rutas estándar de %LOCALAPPDATA%/%APPDATA%), detecta la
-ubicación automáticamente para sugerirla como ciudad, y registra la Tarea
-Programada que ejecuta el cambio de fondo cada hora y al iniciar sesión.
+todo en las rutas estándar de %LOCALAPPDATA%/%APPDATA%) y registra la Tarea
+Programada que ejecuta el cambio de fondo cada hora y al iniciar sesión. La
+ubicación geográfica no se pregunta en la instalación: se detecta sola, por
+IP, en cada ejecución del programa (ver ObtenerUbicacion en el motor).
 
 Uso:
   .\Install.ps1                instalación normal (resguarda una
@@ -61,10 +62,10 @@ Uso:
                                 directamente en vez de resguardarla. Perdés
                                 cualquier imagen o configuración
                                 personalizada que no hayas resguardado vos
-    .\Install.ps1 -DryRunInstall Ejecuta el instalador en modo simulación;
-                                                                 registra las tareas con `-WhatIf` sin
-                                                                 efectuar cambios.
                                 mismo antes.
+  .\Install.ps1 -DryRunInstall Ejecuta el instalador en modo simulación;
+                                registra las tareas con `-WhatIf` sin
+                                efectuar cambios.
   .\Install.ps1 -Help         Muestra esta ayuda.
   .\Install.ps1 -Version      Muestra la versión del instalador.
 "@ | Write-Output
@@ -91,7 +92,7 @@ Write-Host "       THE FIELD HOUSE — LIVE WALLPAPER — INSTALADOR (v$AppVersi
 Write-Host "====================================================================="
 Write-Host ""
 Write-Host "Este programa cambia el fondo de pantalla de Windows automáticamente"
-Write-Host "según la hora del día y el clima de tu ciudad."
+Write-Host "según la hora del día y el clima de tu ubicación (detectada automáticamente)."
 Write-Host ""
 Write-Host "Se va a instalar en:"
 Write-Host "  Programa e imágenes : $DatosApp"
@@ -179,72 +180,6 @@ if ($hayInstalacionPrevia) {
 }
 
 # ----------------------------------------------------------------------------
-# 1) Detección automática de ubicación
-# ----------------------------------------------------------------------------
-# Se usa ip-api.com (HTTP, gratuito, sin API key para uso no comercial y
-# volumen bajo) para resolver ciudad + país a partir de la IP pública. Si
-# falla, o el usuario no está conforme, se le pide que la escriba a mano.
-
-Write-Host ""
-Write-Info "1/4 - Detectando tu ubicación automáticamente..."
-
-$ciudadDetectada = ''
-$ciudadLegible = ''
-
-try {
-    $geo = Invoke-RestMethod -Uri 'http://ip-api.com/json/?fields=status,city,countryCode' -TimeoutSec 8 -ErrorAction Stop
-    if ($geo.status -eq 'success' -and $geo.city -and $geo.countryCode) {
-        # wttr.in espera el nombre de ciudad sin espacios, pegado al código
-        # de país funciona bien como desambiguador (igual que "CanuelasAR").
-        $ciudadDetectada = ($geo.city -replace ' ', '') + $geo.countryCode
-        $ciudadLegible = "$($geo.city), $($geo.countryCode)"
-    }
-} catch {
-    # Sin internet, o el servicio no respondió: se cae al ingreso manual.
-    Write-Verbose "No se pudo detectar la ubicación automáticamente."
-}
-
-if ($ciudadDetectada) {
-    Write-Success "Ubicación detectada: $ciudadLegible"
-    Write-Host ""
-    Write-Host "Se va a usar como ciudad para consultar el clima: $ciudadDetectada"
-    $confirmCiudad = Read-Host "¿Es correcta? [S/n]"
-    if ($confirmCiudad -match '^[nN]$') {
-        $ciudadDetectada = ''
-    }
-} else {
-    Write-Warn "No se pudo detectar la ubicación automáticamente (sin internet o el servicio no respondió)."
-}
-
-if (-not $ciudadDetectada) {
-    Write-Host ""
-    Write-Host "Ingresá tu ciudad manualmente, sin espacios ni tildes, seguida del"
-    Write-Host "código de país si tu ciudad tiene nombres repetidos en el mundo"
-    Write-Host "(por ejemplo: CanuelasAR, LondonGB, ParisFR)."
-    Write-Host ""
-    Write-Host "Podés probar qué te devuelve wttr.in para un nombre antes de"
-    Write-Host "confirmarlo, abriendo en otra ventana de PowerShell:"
-    Write-Host '  Invoke-RestMethod "https://wttr.in/TuCiudad?format=%C"'
-    Write-Host ""
-    $ciudadDetectada = Read-Host "Ciudad"
-    while (-not $ciudadDetectada) {
-        Write-Warn "No puede quedar vacío."
-        $ciudadDetectada = Read-Host "Ciudad"
-    }
-}
-
-# Misma validación que aplica FieldHouseEngine.exe en el arranque (método
-# ValidarConfiguracion): si el nombre tuviera caracteres que rompen la URL
-# de wttr.in, nadie se enteraría hasta ver un fondo raro. Mejor fallar acá,
-# con el valor a la vista.
-if ($ciudadDetectada -notmatch '^[A-Za-z0-9.,_-]+$') {
-    Write-Err "Ciudad inválida: '$ciudadDetectada'. Solo letras y números (sin espacios ni tildes), opcionalmente . , _ o -. Ej: CanuelasAR, LondonGB."
-    exit 1
-}
-
-Write-Success "Ciudad configurada: $ciudadDetectada"
-
-# ----------------------------------------------------------------------------
 # Modo de horarios (fijo por defecto; auto según la salida/puesta del sol)
 # ----------------------------------------------------------------------------
 
@@ -252,7 +187,7 @@ Write-Host ""
 Write-Info "Modo de horarios..."
 Write-Host "  - 'fijo':  horarios fijos (amanecer 06:00, mediodía 10:00, atardecer 15:00, noche 20:00),"
 Write-Host "             siempre iguales, sin importar la estación del año."
-Write-Host "  - 'auto':  franjas según la salida y puesta real del sol en tu ciudad (mediodía ="
+Write-Host "  - 'auto':  franjas según la salida y puesta real del sol en tu ubicación (mediodía ="
 Write-Host "             punto medio, noche = puesta + 2 hs). Requiere internet para calcularlas."
 $modoHorarios = Read-Host "¿Cuál querés? [fijo/auto] (default: fijo)"
 if (-not $modoHorarios) { $modoHorarios = 'fijo' }
@@ -267,7 +202,7 @@ Write-Success "Horarios: $modoHorarios"
 # ----------------------------------------------------------------------------
 
 Write-Host ""
-Write-Info "2/4 - Instalando archivos..."
+Write-Info "1/3 - Instalando archivos..."
 
 New-Item -ItemType Directory -Path (Join-Path $DatosApp 'bin') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $DatosApp 'fondos') -Force | Out-Null
@@ -315,11 +250,10 @@ Write-Success "Programa instalado en $DatosApp"
 # ----------------------------------------------------------------------------
 
 Write-Host ""
-Write-Info "3/4 - Generando configuración..."
+Write-Info "2/3 - Generando configuración..."
 
 $configObj = [PSCustomObject]@{
     CarpetaFondos          = Join-Path $DatosApp 'fondos'
-    Ciudad                 = $ciudadDetectada
     ModoHorarios            = $modoHorarios
     HoraInicioAmanecer     = '06:00'
     HoraInicioMediodia     = '10:00'
@@ -350,7 +284,7 @@ Write-Success "Configuración guardada en $ConfigFile"
 # persistente del que este instalador no debería ser responsable.
 
 Write-Host ""
-Write-Info "4/4 - Configurando ejecución automática (Tareas Programadas)..."
+Write-Info "3/3 - Configurando ejecución automática (Tareas Programadas)..."
 
 $exePath = Join-Path $DatosApp 'bin\FieldHouseEngine.exe'
 
@@ -472,7 +406,7 @@ Write-Host ""
 Write-Host "  OK Programa      : $DatosApp"
 Write-Host "  OK Configuración : $ConfigFile"
 Write-Host "  OK Logs          : $(Join-Path $StateDir 'log.txt')"
-Write-Host "  OK Ciudad        : $ciudadDetectada"
+Write-Host "  OK Ubicación     : detección automática por IP en cada arranque"
 Write-Host "  OK Horarios      : $modoHorarios"
 Write-Host ""
 if ($hayInstalacionPrevia) {
@@ -503,13 +437,13 @@ Write-Host ""
 Write-Host "  Ver la ayuda completa:"
 Write-Host "    & `"$exePath`" --help"
 Write-Host ""
-Write-Host "  Reconfigurar (ciudad, modo de horarios, franjas horarias):"
+Write-Host "  Reconfigurar (modo de horarios, franjas horarias):"
 Write-Host "    & `"$exePath`" --config"
 Write-Host ""
 Write-Host "  Ver el log:"
 Write-Host "    Get-Content `"$(Join-Path $StateDir 'log.txt')`" -Tail 20 -Wait"
 Write-Host ""
-Write-Host "  Editar configuración (ciudad, franjas horarias):"
+Write-Host "  Editar configuración (franjas horarias, transición):"
 Write-Host "    notepad `"$ConfigFile`""
 Write-Host ""
 Write-Host "  Desinstalar:"
