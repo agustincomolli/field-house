@@ -6,7 +6,7 @@
 
 Abrí un [issue](../../issues) con:
 
-- Tu distro y versión de XFCE (`xfce4-panel --version`)
+- Tu distro, escritorio y versión (`echo $XDG_CURRENT_DESKTOP`; en XFCE también `xfce4-panel --version`)
 - Qué esperabas que pasara vs. qué pasó
 - Las últimas líneas relevantes de `~/.local/state/field-house/log.txt`
 - Si aplica, la salida de `systemctl --user status field-house.timer`
@@ -18,7 +18,7 @@ Abrí un [issue](../../issues) con:
    - Corré `shellcheck` sobre el archivo antes de abrir el PR (`shellcheck bin/change_wallpaper.sh`). El CI del repo lo corre automáticamente en cada push, pero adelantarlo evita idas y vueltas.
    - Corré `bash -n <archivo>` para validar sintaxis (también lo hace el CI).
    - Si tocás una función pura de `bin/change_wallpaper.sh` (conversión de horas, `validar_configuracion`, la lógica de decisión de franja/clima), corré `bats tests/change_wallpaper.bats` — el CI también lo hace, pero adelantarlo evita idas y vueltas. Si agregás una función pura nueva, sumale sus tests en el mismo archivo. La lógica de decisión de franja+clima vive en el cuerpo principal del script (no en una función con nombre) y se testea contra una copia comentada dentro del propio archivo de tests — ver la nota al final de `tests/change_wallpaper.bats` si tocás esa parte.
-   - Probá la lógica de franjas/clima sin una sesión XFCE con `bin/change_wallpaper.sh --dry-run` (validar configuración es parte de eso). Si el cambio toca `xfconf-query` real, probalo también en una sesión XFCE — eso sí sigue sin tests automatizados (comportamiento en vivo contra una sesión gráfica real).
+   - Probá la lógica de franjas/clima sin sesión gráfica con `bin/change_wallpaper.sh --dry-run` (validar configuración es parte de eso). Si el cambio toca la aplicación real del fondo (`xfconf-query`, `gsettings` o `qdbus`/`qdbus6`, según `detectar_escritorio`), probalo también en una sesión real del escritorio que corresponda — eso sí sigue sin tests automatizados (comportamiento en vivo contra una sesión gráfica real). No hace falta probar los 5 escritorios soportados (XFCE, GNOME, Cinnamon, MATE, KDE Plasma) para cada cambio; alcanza con el que tengas a mano, salvo que el cambio sea específico de `aplicar_fondo`/`detectar_escritorio`.
    - Mantené los comentarios y docstrings de las funciones existentes como referencia de estilo.
 3. Si tocás `windows/engine/FieldHouseEngine.cs`, `windows/engine/Build-Engine.ps1`, `Install.ps1` o `Uninstall.ps1` (Windows):
    - El CI del repo compila `FieldHouseEngine.cs` con `csc.exe` en un runner `windows-latest`, corre `PSScriptAnalyzer` sobre los `.ps1`, un parseo de sintaxis (AST) de esos mismos `.ps1`, y smoke tests con `--dry-run` contra el `.exe` compilado, todo en el job `powershell-checks`. Si tenés Windows disponible localmente, adelantalo con `.\windows\engine\Build-Engine.ps1 -RutaCsharp .\windows\engine\FieldHouseEngine.cs -RutaExeSalida .\FieldHouseEngine.exe` y después `Invoke-ScriptAnalyzer -Path windows\ -Recurse -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost` antes de abrir el PR.

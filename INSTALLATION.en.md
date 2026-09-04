@@ -9,7 +9,7 @@ This document explains in detail how each part of the program works, and how to 
 ```
 field-house/
 ├── bin/
-│   └── change_wallpaper.sh           # Linux/XFCE engine
+│   └── change_wallpaper.sh           # Linux engine (multi-desktop)
 ├── windows/
 │   ├── engine/
 │   │   ├── FieldHouseEngine.cs        # Windows 10/11 engine (C#, compiled at install time)
@@ -192,26 +192,40 @@ There are three systemd files:
 | `field-house.timer` | Triggers that service every hour (`OnCalendar=hourly`), with `Persistent=true` |
 | `field-house-login.service` | Runs the script once at graphical login, with the `--reboot` flag |
 
-`field-house-login.service` exists in addition to the timer's `Persistent=true` because the latter runs "as soon as possible" after boot, which can be before XFCE finishes initializing `xfconf`. The `--reboot` flag adds a delay (`ESPERA_INICIAL_SEGUNDOS`, 15s by default) to avoid that issue, and it also enables the boot-time weather retry in case the network isn't ready yet (see the Weather section).
+`field-house-login.service` exists in addition to the timer's `Persistent=true` because the latter runs "as soon as possible" after boot, which can be before the desktop environment finishes initializing (whichever config subsystem applies: `xfconf` on XFCE, the D-Bus session bus for `gsettings`/`qdbus` on the others). The `--reboot` flag adds a delay (`ESPERA_INICIAL_SEGUNDOS`, 15s by default) to avoid that issue, and it also enables the boot-time location/weather retry in case the network isn't ready yet (see the Weather section).
 
 ### Image verification
 
 On startup, the script checks that all 9 wallpaper images exist in `CARPETA_FONDOS`. If any is missing, it doesn't apply any change and logs it — so you find out about a misspelled filename or an incomplete replacement as soon as the script runs, instead of discovering it only when that particular time slot or weather condition comes up.
 
+### Supported desktops
+
+The desktop environment is auto-detected (`detectar_escritorio()`, via `$XDG_CURRENT_DESKTOP` with `$DESKTOP_SESSION` as fallback) on every run; there's no installation step or config field to choose it by hand.
+
+| Desktop | Mechanism to apply the wallpaper |
+|---|---|
+| XFCE | `xfconf-query` (`last-image` properties) |
+| GNOME, Unity, Budgie | `gsettings set org.gnome.desktop.background` |
+| Cinnamon | `gsettings set org.cinnamon.desktop.background` |
+| MATE | `gsettings set org.mate.background` |
+| KDE Plasma | D-Bus script to `plasmashell` (`qdbus6` or `qdbus`) |
+
+If the current desktop isn't recognized, the script logs it and doesn't apply any wallpaper (everything else — time slots, weather, logging — keeps working). The crossfade transition (ImageMagick) is only implemented for XFCE for now: on the other desktops the wallpaper change is direct, no animation (same as on Windows).
+
 ### Multi-monitor
 
-The script loops through every `last-image` xfconf property (one per monitor/workspace) and updates all of them, so if you have more than one monitor or several workspaces, they all stay in sync. The property list is fetched **once** per run and reused across the transition steps, avoiding dozens of `xfconf-query` calls.
+On XFCE, the script loops through every `last-image` xfconf property (one per monitor/workspace) and updates all of them, so if you have more than one monitor or several workspaces, they all stay in sync. The property list is fetched **once** per run and reused across the transition steps, avoiding dozens of `xfconf-query` calls. On GNOME/Cinnamon/MATE/KDE, a single background property applies to every monitor at once (nothing to loop over).
 
 ## Validation and robustness
 
-The design goal is to **degrade gracefully but fail clearly**: the script survives without network, without ImageMagick, or without a ready XFCE session, but when something is misconfigured it announces it clearly and early, instead of producing weird wallpapers or silent failures.
+The design goal is to **degrade gracefully but fail clearly**: the script survives without network, without ImageMagick, or without a ready graphical session, but when something is misconfigured it announces it clearly and early, instead of producing weird wallpapers or silent failures.
 
-- **Dependencies checked at startup.** Before anything else, it verifies that `curl`, `xfconf-query` (only for real runs, not `--dry-run`), `awk`, `grep`, `tr`, `seq`, `head`, and `cut` exist. If any is missing, the script exits immediately with a logged message. ImageMagick (`convert`/`identify`) is optional: it only produces a notice.
+- **Dependencies checked at startup.** Before anything else, it verifies that `curl`, `awk`, `grep`, `tr`, `seq`, `head`, `cut`, and whichever wallpaper command matches the detected desktop — `xfconf-query`, `gsettings`, or `qdbus`/`qdbus6` — exist (only for real runs, not `--dry-run`). If any is missing, the script exits immediately with a logged message. ImageMagick (`convert`/`identify`) is optional: it only produces a notice.
 - **Validated configuration.** After loading `config.conf` it validates: `MODO_HORARIOS` (`fijo` or `auto`), the `HORA_INICIO_*` values (`HH:MM` format), `PASOS_TRANSICION`, `PAUSA_ENTRE_PASOS`, the remaining numeric values, and that `CARPETA_FONDOS` is a directory. An invalid value stops the run with a message saying exactly which variable is wrong and how to fix it.
 - **Safe, self-cleaning temp files.** The transition frames go to a `mktemp` directory (private permissions), and a `trap` removes it on exit — normal or interrupted. Old versions could leave orphan directories in `/tmp` if the script died halfway; that no longer happens.
-- **No silent xfconf failures.** If any `last-image` property fails to be set, failures are accumulated and logged (with the affected property names). If there are no `last-image` properties at all (fresh XFCE profile), it's reported explicitly.
+- **No silent failures when applying the wallpaper.** On XFCE, if any `last-image` property fails to be set, failures are accumulated and logged (with the affected property names); if there are no `last-image` properties at all (fresh profile), it's reported explicitly. On the other desktops, a failed `gsettings`/`qdbus` call is also logged with detail.
 - **Rotated log.** Each line is a single run (24/day), so it grows slowly, but the log is still rotated to `log.txt.1` once it exceeds `MAX_LOG_BYTES` (1 MiB by default), keeping only the most recent copy.
-- **`--dry-run` for diagnostics.** `change_wallpaper.sh --dry-run` (optionally with `--reboot`) prints the time slot, weather, and wallpaper that would be applied **without** touching xfconf, without writing logs or state, and without waits or the lock. It's useful for testing the time/weather logic on any machine, and it's the first thing we ask for in a bug report.
+- **`--dry-run` for diagnostics.** `change_wallpaper.sh --dry-run` (optionally with `--reboot`) prints the time slot, weather, and wallpaper that would be applied **without** touching the real desktop, without writing logs or state, and without waits or the lock. It's useful for testing the time/weather logic on any machine — even without a graphical session — and it's the first thing we ask for in a bug report.
 
 ## Tests and CI
 
@@ -276,7 +290,7 @@ Unlike Linux (where the engine is a bash script interpreted by `bash` on every r
 | Concept | Linux | Windows |
 |---|---|---|
 | Engine | `bin/change_wallpaper.sh` (bash, interpreted on every run) | `FieldHouseEngine.exe` (C#, compiled once at install time) |
-| Applying the wallpaper | `xfconf-query` (XFCE `last-image` properties) | `SystemParametersInfo` (Win32, via P/Invoke) — applies to all monitors at once, no iteration needed |
+| Applying the wallpaper | `xfconf-query`, `gsettings`, or `qdbus`/`qdbus6`, depending on the detected desktop | `SystemParametersInfo` (Win32, via P/Invoke) — applies to all monitors at once, no iteration needed |
 | Periodic execution | `systemd` user timer | Scheduled Task `FieldHouseWallpaper` (hourly trigger), runs the `.exe` directly |
 | Login execution | `field-house-login.service` (`--reboot`) | Scheduled Task `FieldHouseWallpaperLogin` (`AtLogOn` trigger), runs the `.exe` with `--reboot` |
 | Anti-concurrency lock | `flock` on a file | `System.Threading.Mutex` with a session-scoped name |
@@ -358,11 +372,14 @@ The script validates the configuration before applying anything. Edit the value 
 **The log says `ERROR: faltan comandos requeridos`:**
 A system binary is missing. The message lists which ones. Install `curl` (or whichever is missing, e.g. with `sudo apt install <package>`).
 
-**The log says `AVISO: no se encontró ninguna propiedad 'last-image'`:**
+**The log says `AVISO: no se encontró ninguna propiedad 'last-image'` (XFCE only):**
 The script can't see any wallpaper properties in xfconf. This happens when the graphical session isn't ready yet (ran by hand without an XFCE session open?), or with a freshly created XFCE profile. Run `xfconf-query -c xfce4-desktop -l` to check whether they exist; if not, set a wallpaper from the XFCE menu once.
 
-**The log says some `last-image` properties failed to be set:**
-The script tried to apply the wallpaper but one or more properties rejected the value (usually a session/permission issue or DISPLAY). Check the property list in the message and make sure the graphical session is active.
+**The log says some `last-image` properties failed to be set (XFCE), or that `gsettings`/`qdbus` failed (GNOME/Cinnamon/MATE/KDE):**
+The script tried to apply the wallpaper but the matching command rejected the value (usually a session/permission issue, or `DISPLAY`/`DBUS_SESSION_BUS_ADDRESS` not resolving correctly). Check the detail in the message and make sure the graphical session is active.
+
+**The log says `AVISO: no se reconoció el entorno de escritorio`:**
+`$XDG_CURRENT_DESKTOP` (or `$DESKTOP_SESSION` as fallback) doesn't match any of the supported desktops: XFCE, GNOME, Cinnamon, MATE, KDE Plasma. Run `echo $XDG_CURRENT_DESKTOP` in a terminal from that graphical session to see what value your desktop reports; if you think it should be recognized (e.g. a variant or fork of a supported one), open an issue with that value.
 
 **I want to see which wallpaper would be applied without waiting for the next hour or dirtying the log:**
 `~/.local/share/field-house/bin/change_wallpaper.sh --dry-run`. It prints the time slot, weather, and chosen wallpaper without touching anything.

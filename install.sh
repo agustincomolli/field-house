@@ -89,10 +89,33 @@ if [[ "${EUID}" -eq 0 ]]; then
     exit 1
 fi
 
-if ! command -v xfconf-query >/dev/null 2>&1; then
-    error "No se encontró xfconf-query. Este programa es para entornos XFCE (Linux Mint XFCE, Xubuntu, etc)."
-    exit 1
-fi
+DESKTOP_ID=$(printf '%s' "${XDG_CURRENT_DESKTOP:-${DESKTOP_SESSION:-}}" | tr '[:upper:]' '[:lower:]')
+
+case "$DESKTOP_ID" in
+    *xfce*)
+        if ! command -v xfconf-query >/dev/null 2>&1; then
+            error "No se encontró xfconf-query, necesario para aplicar el fondo en XFCE."
+            exit 1
+        fi
+        ;;
+    *cinnamon*|*gnome*|*unity*|*budgie*|*mate*)
+        if ! command -v gsettings >/dev/null 2>&1; then
+            error "No se encontró gsettings, necesario para aplicar el fondo en este escritorio."
+            exit 1
+        fi
+        ;;
+    *kde*|*plasma*)
+        if ! command -v qdbus6 >/dev/null 2>&1 && ! command -v qdbus >/dev/null 2>&1; then
+            error "No se encontró qdbus/qdbus6, necesario para aplicar el fondo en KDE Plasma."
+            exit 1
+        fi
+        ;;
+    *)
+        warning "No se reconoció el escritorio actual (XDG_CURRENT_DESKTOP='${XDG_CURRENT_DESKTOP:-vacío}')."
+        warning "Se instala igual: field-house soporta XFCE, GNOME, Cinnamon, MATE y KDE Plasma."
+        warning "Si tu sesión gráfica es una de esas, puede que la detección automática (en runtime, cada vez que se aplica el fondo) sí funcione."
+        ;;
+esac
 
 if ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user status >/dev/null 2>&1; then
     error "No se encontró systemd de usuario funcionando. Este instalador lo necesita para programar la ejecución automática."
@@ -119,7 +142,7 @@ echo "====================================================================="
 echo "       THE FIELD HOUSE — LIVE WALLPAPER — INSTALADOR  (v$VERSION)"
 echo "====================================================================="
 echo
-echo "Este programa cambia el fondo de pantalla de XFCE automáticamente"
+echo "Este programa cambia el fondo de pantalla automáticamente"
 echo "según la hora del día y el clima de tu ubicación (detectada automáticamente)."
 echo
 echo "Se va a instalar en:"
@@ -296,7 +319,7 @@ PASOS_TRANSICION=15
 PAUSA_ENTRE_PASOS="0.15"
 
 # Espera en segundos antes de aplicar el fondo al iniciar sesión, para
-# darle tiempo a XFCE (y a la red) a estar listos.
+# darle tiempo al escritorio (y a la red) a estar listos.
 ESPERA_INICIAL_SEGUNDOS=15
 
 # Al iniciar sesión, si la red todavía no está lista (WiFi lentos, etc.),

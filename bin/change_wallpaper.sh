@@ -4,10 +4,11 @@
 # change_wallpaper.sh — motor de la app
 # Versión: ver el archivo VERSION
 #
-# Cambia el fondo de pantalla en XFCE (Linux Mint y derivados) según franjas
-# horarias FIJAS del reloj, y según el clima actual (lluvia/nublado) en
-# amanecer, mediodía, atardecer o noche. La ubicación geográfica se detecta
-# automáticamente por IP en cada ejecución (ver obtener_ubicacion); el
+# Cambia el fondo de pantalla en Linux (XFCE, GNOME, Cinnamon, MATE y KDE
+# Plasma; ver detectar_escritorio) según franjas horarias FIJAS del reloj, y
+# según el clima actual (lluvia/nublado) en amanecer, mediodía, atardecer o
+# noche. La ubicación geográfica se detecta automáticamente por IP en cada
+# ejecución (ver obtener_ubicacion); el
 # usuario no configura ninguna ciudad ni coordenadas.
 #
 # Este script es el "motor" de la app. La configuración (franjas horarias,
@@ -28,7 +29,9 @@
 #   change_wallpaper.sh --version  muestra la versión
 #   change_wallpaper.sh --help     muestra la ayuda completa
 #
-# Requiere: curl, xfconf-query (XFCE), awk, grep, tr, seq, head y cut.
+# Requiere: curl, awk, grep, tr, seq, head, cut, y una de estas según tu
+# escritorio (se detecta sola): xfconf-query (XFCE), gsettings (GNOME,
+# Cinnamon, MATE) o qdbus/qdbus6 (KDE Plasma).
 # Opcional: convert/identify (ImageMagick) para la transición de fundido;
 # si no están instalados, el cambio de fondo es directo, sin fundido.
 # ============================================================================
@@ -74,7 +77,7 @@ mostrar_ayuda() {
     cat <<EOF
 The Field House — Live Wallpaper v$VERSION
 
-Cambia el fondo de pantalla XFCE según la franja horaria (amanecer, mediodía,
+Cambia el fondo de pantalla según la franja horaria (amanecer, mediodía,
 atardecer, noche) y el clima actual (nublado/lluvia) de tu ubicación,
 detectada automáticamente por IP.
 
@@ -319,12 +322,23 @@ consultar_horarios_sol() {
 # Verifica que los comandos requeridos existan ANTES de empezar a trabajar, en
 # vez de fallar a mitad de ejecución. Las herramientas opcionales de la
 # transición (ImageMagick) solo generan un aviso: el resto del script degrada
-# con elegancia a cambio directo. En --dry-run no se exigen xfconf-query ni
-# flock: la simulación justamente permite diagnosticar sin una sesión XFCE
-# real (flock bloquea el lock anti-concurrencia y xfconf-query es XFCE).
+# con elegancia a cambio directo. En --dry-run no se exige el comando de
+# aplicar fondo (xfconf-query/gsettings/qdbus) ni flock: la simulación
+# justamente permite diagnosticar sin una sesión gráfica real.
 validar_dependencias() {
     local requeridas=(awk grep tr seq head cut)
-    [ "$MODO_DRY" = "no" ] && requeridas+=(xfconf-query flock)
+    if [ "$MODO_DRY" = "no" ]; then
+        requeridas+=(flock)
+        case "$ESCRITORIO" in
+            xfce) requeridas+=(xfconf-query) ;;
+            gnome|cinnamon|mate) requeridas+=(gsettings) ;;
+            kde)
+                if ! command -v qdbus6 >/dev/null 2>&1 && ! command -v qdbus >/dev/null 2>&1; then
+                    requeridas+=(qdbus)
+                fi
+                ;;
+        esac
+    fi
     local opcionales=(convert identify)
     local faltando=()
     local cmd
@@ -408,33 +422,112 @@ validar_configuracion() {
     fi
 }
 
+# detectar_escritorio
+# Identifica el entorno de escritorio actual a partir de XDG_CURRENT_DESKTOP
+# (con DESKTOP_SESSION como respaldo, por si XDG_CURRENT_DESKTOP no está
+# seteada, algo común al correr desde systemd/cron sin heredar la sesión
+# completa). Devuelve uno de: xfce, gnome, cinnamon, mate, kde, o vacío si
+# no se reconoce ninguno soportado.
+detectar_escritorio() {
+    local id="${XDG_CURRENT_DESKTOP:-${DESKTOP_SESSION:-}}"
+    id=$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')
+
+    case "$id" in
+        *xfce*)     echo "xfce" ;;
+        *cinnamon*) echo "cinnamon" ;;
+        *gnome*|*unity*|*budgie*) echo "gnome" ;;
+        *mate*)     echo "mate" ;;
+        *kde*|*plasma*) echo "kde" ;;
+        *) echo "" ;;
+    esac
+}
+
 # obtener_props_fondo
-# Devuelve todas las propiedades "last-image" de xfconf (una por monitor y/o
-# workspace). Vacío si no hay ninguna (perfil XFCE recién creado, por ejemplo).
+# Devuelve todas las propiedades "last-image" de xfconf (solo aplica a XFCE;
+# GNOME/Cinnamon/MATE/KDE tienen una única propiedad de fondo, sin necesidad
+# de enumerar). Vacío si no hay ninguna (perfil XFCE recién creado, por
+# ejemplo).
 obtener_props_fondo() {
+    [ "$ESCRITORIO" = "xfce" ] || return 0
     xfconf-query -c xfce4-desktop -l 2>/dev/null | grep 'last-image$'
 }
 
 # obtener_fondo_actual
-# Devuelve la ruta de la imagen actualmente configurada como fondo, tomando
-# la primera propiedad "last-image" que encuentre. Vacío si no hay ninguna.
+# Devuelve la ruta de la imagen actualmente configurada como fondo. Vacío si
+# no se pudo determinar (perfil recién creado, escritorio no soportado, etc).
 obtener_fondo_actual() {
     local prop
     if [ "$MODO_DRY" = "si" ]; then
         return 0
     fi
-    prop=$(obtener_props_fondo | head -n 1)
-    if [ -n "$prop" ]; then
-        xfconf-query -c xfce4-desktop -p "$prop" 2>/dev/null
-    fi
+    case "$ESCRITORIO" in
+        xfce)
+            prop=$(obtener_props_fondo | head -n 1)
+            [ -n "$prop" ] && xfconf-query -c xfce4-desktop -p "$prop" 2>/dev/null
+            ;;
+        gnome)
+            gsettings get org.gnome.desktop.background picture-uri 2>/dev/null | sed "s/^'file:\/\///; s/'$//"
+            ;;
+        cinnamon)
+            gsettings get org.cinnamon.desktop.background picture-uri 2>/dev/null | sed "s/^'file:\/\///; s/'$//"
+            ;;
+        mate)
+            gsettings get org.mate.background picture-filename 2>/dev/null | sed "s/^'//; s/'$//"
+            ;;
+        kde)
+            # KDE no tiene un "get" simple sin parsear config de Plasma;
+            # se omite (solo se usa para decidir si animar la transición
+            # desde un fondo previo válido, que en KDE simplemente no se
+            # anima: ver aplicar_fondo).
+            ;;
+    esac
 }
 
 # aplicar_fondo <imagen> [<props>]
-# Asigna <imagen> en todas las propiedades "last-image" de xfconf. Si se pasa
-# <props> (lista ya obtenida) se reutiliza, para no relanzar xfconf-query en
-# cada uno de los pasos de la transición. Registra en el log las propiedades
-# que fallaron, en lugar de fracasar en silencio.
+# Asigna <imagen> como fondo de pantalla, con el mecanismo que corresponda al
+# escritorio detectado en $ESCRITORIO. <props> (lista de propiedades xfconf
+# ya obtenida) es específico de XFCE, para no relanzar xfconf-query en cada
+# paso de la transición; se ignora en los demás escritorios. Registra en el
+# log lo que haya fallado, en lugar de fracasar en silencio.
 aplicar_fondo() {
+    local imagen="$1"
+    local props="${2:-}"
+
+    if [ "$MODO_DRY" = "si" ]; then
+        log "DRY-RUN: se aplicaría '$imagen' como fondo de pantalla."
+        return 0
+    fi
+
+    case "$ESCRITORIO" in
+        xfce)
+            aplicar_fondo_xfce "$imagen" "$props"
+            ;;
+        gnome)
+            gsettings set org.gnome.desktop.background picture-uri "file://$imagen" 2>/dev/null \
+                || { log "AVISO: falló gsettings al aplicar '$imagen' (org.gnome.desktop.background)."; return 1; }
+            ;;
+        cinnamon)
+            gsettings set org.cinnamon.desktop.background picture-uri "file://$imagen" 2>/dev/null \
+                || { log "AVISO: falló gsettings al aplicar '$imagen' (org.cinnamon.desktop.background)."; return 1; }
+            ;;
+        mate)
+            gsettings set org.mate.background picture-filename "$imagen" 2>/dev/null \
+                || { log "AVISO: falló gsettings al aplicar '$imagen' (org.mate.background)."; return 1; }
+            ;;
+        kde)
+            aplicar_fondo_kde "$imagen"
+            ;;
+        *)
+            log "AVISO: no se reconoció el entorno de escritorio (XDG_CURRENT_DESKTOP='${XDG_CURRENT_DESKTOP:-}'); no se pudo aplicar '$imagen'."
+            return 1
+            ;;
+    esac
+}
+
+# aplicar_fondo_xfce <imagen> [<props>]
+# Implementación XFCE de aplicar_fondo: asigna <imagen> en todas las
+# propiedades "last-image" de xfconf (una por monitor y/o workspace).
+aplicar_fondo_xfce() {
     local imagen="$1"
     local props="${2:-}"
     local n_fallos=0
@@ -443,11 +536,6 @@ aplicar_fondo() {
 
     if [ -z "$props" ]; then
         props=$(obtener_props_fondo)
-    fi
-
-    if [ "$MODO_DRY" = "si" ]; then
-        log "DRY-RUN: se aplicaría '$imagen' como fondo de pantalla."
-        return 0
     fi
 
     if [ -z "$props" ]; then
@@ -469,6 +557,38 @@ aplicar_fondo() {
         return 1
     fi
     return 0
+}
+
+# aplicar_fondo_kde <imagen>
+# Implementación KDE Plasma de aplicar_fondo. KDE no tiene una propiedad de
+# fondo tipo xfconf/gsettings: hay que mandarle un script JS al shell de
+# Plasma vía D-Bus. Se prueba qdbus6 y qdbus (el binario se llama distinto
+# según la versión de Qt/Plasma instalada). No hay transición animada en
+# KDE: cada aplicación es directa, igual que en Windows.
+aplicar_fondo_kde() {
+    local imagen="$1"
+    local qdbus_bin script
+
+    qdbus_bin=$(command -v qdbus6 || command -v qdbus 2>/dev/null)
+    if [ -z "$qdbus_bin" ]; then
+        log "AVISO: no se encontró qdbus/qdbus6; no se pudo aplicar '$imagen' en KDE Plasma."
+        return 1
+    fi
+
+    script="
+        var Desktops = desktops();
+        for (i = 0; i < Desktops.length; i++) {
+            d = Desktops[i];
+            d.wallpaperPlugin = 'org.kde.image';
+            d.currentConfigGroup = Array('Wallpaper', 'org.kde.image', 'General');
+            d.writeConfig('Image', 'file://$imagen');
+        }
+    "
+
+    if ! "$qdbus_bin" org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$script" >/dev/null 2>&1; then
+        log "AVISO: falló $qdbus_bin al aplicar '$imagen' en KDE Plasma."
+        return 1
+    fi
 }
 
 # transicionar_fondo <imagen_destino>
@@ -629,6 +749,11 @@ if [ "$MODO_DRY" = "no" ]; then
     mkdir -p "$STATE_DIR"
 fi
 
+# Escritorio detectado (xfce/gnome/cinnamon/mate/kde, o vacío si no se
+# reconoce ninguno soportado). Se usa tanto acá abajo (para saber qué
+# comando exigir) como en aplicar_fondo/obtener_fondo_actual más adelante.
+ESCRITORIO=$(detectar_escritorio)
+
 # Se valida después de crear el directorio de estado (los errores se escriben
 # al log) pero ANTES de tomar el lock: así una dependencia faltante sale
 # limpia, sin intentos fallidos de flock ni ruido en la terminal.
@@ -690,10 +815,11 @@ FONDO_LLUVIA_NOCHE="$CARPETA_FONDOS/lluvia-noche.jpg"
 # ----------------------------------------------------------------------------
 # 0.2) Espera inicial (solo si se invoca con --reboot)
 # ----------------------------------------------------------------------------
-# Al iniciar sesión, el escritorio XFCE puede tardar unos segundos en estar
-# listo; sin esta espera, xfconf-query podría fallar. Solo se aplica con el
+# Al iniciar sesión, el escritorio puede tardar unos segundos en estar
+# listo; sin esta espera, el comando de aplicar fondo (xfconf-query/
+# gsettings/qdbus, según corresponda) podría fallar. Solo se aplica con el
 # flag --reboot para no demorar las ejecuciones periódicas normales. En
-# --dry-run se omite (no hay XFCE real involucrado).
+# --dry-run se omite (no hay sesión gráfica real involucrada).
 
 if [ "$ARG_REBOOT" = "si" ] && [ "$MODO_DRY" = "no" ]; then
     sleep "$ESPERA_INICIAL_SEGUNDOS"

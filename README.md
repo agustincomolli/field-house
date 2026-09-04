@@ -2,14 +2,14 @@
 
 # The Field House — Live Wallpaper
 
-Cambia automáticamente el fondo de pantalla — de **XFCE** (Linux Mint XFCE, Xubuntu, y derivados) o de **Windows 10/11** — según la hora del día y el clima actual: amanecer, mediodía, atardecer o noche, cada uno con su propia versión lluviosa/nublada.
+Cambia automáticamente el fondo de pantalla — de **Linux** (XFCE, GNOME, Cinnamon, MATE, KDE Plasma) o de **Windows 10/11** — según la hora del día y el clima actual: amanecer, mediodía, atardecer o noche, cada uno con su propia versión lluviosa/nublada.
 
-- [🐧 Instalación en Linux / XFCE](#instalación-linux)
+- [🐧 Instalación en Linux](#instalación-linux)
 - [🪟 Instalación en Windows](#instalación-windows)
 
 ## Características
 
-- 🐧🪟 **Linux (XFCE) y Windows 10/11**: mismo comportamiento, mismas imágenes, cada uno con su instalador nativo.
+- 🐧🪟 **Linux (XFCE, GNOME, Cinnamon, MATE, KDE Plasma) y Windows 10/11**: mismo comportamiento, mismas imágenes, cada uno con su instalador nativo. El escritorio Linux se detecta automáticamente en cada ejecución, sin configuración.
 - 🕐 **Franjas horarias fijas y configurables**: amanecer, mediodía, atardecer y noche, con los horarios que vos definas (**o automáticas según la salida/puesta del sol**, elegible durante la instalación).
 - 🌧️ **Clima en tiempo real**: si está nublado o lloviendo, usa una imagen distinta según el momento del día (día, atardecer o noche).
 - 🎨 **Transición de fundido** entre un fondo y el siguiente (solo Linux, opcional, requiere ImageMagick).
@@ -22,7 +22,7 @@ Cambia automáticamente el fondo de pantalla — de **XFCE** (Linux Mint XFCE, X
 
 ## Instalación (Linux)
 
-Requisitos: Linux Mint XFCE (o cualquier distro con XFCE) con `systemd`, `curl`, y `xfconf-query` (viene con XFCE).
+Requisitos: `systemd`, `curl`, y el comando que corresponda a tu escritorio: `xfconf-query` (XFCE), `gsettings` (GNOME, Cinnamon, MATE) o `qdbus`/`qdbus6` (KDE Plasma). El escritorio se detecta solo; no hace falta indicarlo.
 
 ```bash
 git clone https://github.com/agustincomolli/field-house.git

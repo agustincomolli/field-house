@@ -238,6 +238,64 @@ set_config_valida() {
 }
 
 # ----------------------------------------------------------------------------
+# detectar_escritorio
+# ----------------------------------------------------------------------------
+# Cubre el mapeo de XDG_CURRENT_DESKTOP (con DESKTOP_SESSION como respaldo) a
+# los identificadores internos que usan aplicar_fondo/obtener_fondo_actual.
+# No depende de red ni de una sesión gráfica real: es pura lógica de texto.
+
+@test "detectar_escritorio: XFCE" {
+    XDG_CURRENT_DESKTOP="XFCE"
+    result="$(detectar_escritorio)"
+    [ "$result" = "xfce" ]
+}
+
+@test "detectar_escritorio: GNOME" {
+    XDG_CURRENT_DESKTOP="GNOME"
+    result="$(detectar_escritorio)"
+    [ "$result" = "gnome" ]
+}
+
+@test "detectar_escritorio: Ubuntu usa GNOME por debajo (XDG_CURRENT_DESKTOP=ubuntu:GNOME)" {
+    XDG_CURRENT_DESKTOP="ubuntu:GNOME"
+    result="$(detectar_escritorio)"
+    [ "$result" = "gnome" ]
+}
+
+@test "detectar_escritorio: Cinnamon" {
+    XDG_CURRENT_DESKTOP="X-Cinnamon"
+    result="$(detectar_escritorio)"
+    [ "$result" = "cinnamon" ]
+}
+
+@test "detectar_escritorio: MATE" {
+    XDG_CURRENT_DESKTOP="MATE"
+    result="$(detectar_escritorio)"
+    [ "$result" = "mate" ]
+}
+
+@test "detectar_escritorio: KDE Plasma" {
+    XDG_CURRENT_DESKTOP="KDE"
+    result="$(detectar_escritorio)"
+    [ "$result" = "kde" ]
+}
+
+@test "detectar_escritorio: usa DESKTOP_SESSION como respaldo si XDG_CURRENT_DESKTOP esta vacia" {
+    XDG_CURRENT_DESKTOP=""
+    DESKTOP_SESSION="cinnamon"
+    result="$(detectar_escritorio)"
+    [ "$result" = "cinnamon" ]
+}
+
+@test "detectar_escritorio: escritorio no reconocido devuelve vacio" {
+    XDG_CURRENT_DESKTOP="LXQt"
+    DESKTOP_SESSION=""
+    result="$(detectar_escritorio)"
+    [ "$result" = "" ]
+}
+
+
+# ----------------------------------------------------------------------------
 # Lógica de decisión de franja horaria + clima
 # ----------------------------------------------------------------------------
 # Esta lógica vive en el cuerpo principal del script (no en una función

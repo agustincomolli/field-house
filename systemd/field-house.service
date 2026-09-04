@@ -1,5 +1,5 @@
 [Unit]
-Description=The Field House - actualiza el fondo de pantalla XFCE según hora y clima
+Description=The Field House - actualiza el fondo de pantalla según hora y clima
 # No dependemos de network-online.target como Requires: si no hay red,
 # el propio script lo maneja (usa el fondo base y lo deja en el log).
 After=graphical-session.target

@@ -2,14 +2,14 @@
 
 # The Field House — Live Wallpaper
 
-Automatically changes your desktop wallpaper — on **XFCE** (Linux Mint XFCE, Xubuntu, and derivatives) or on **Windows 10/11** — based on the time of day and the current weather: sunrise, midday, sunset, or night, each with its own rainy/overcast version.
+Automatically changes your desktop wallpaper — on **Linux** (XFCE, GNOME, Cinnamon, MATE, KDE Plasma) or on **Windows 10/11** — based on the time of day and the current weather: sunrise, midday, sunset, or night, each with its own rainy/overcast version.
 
-- [🐧 Linux / XFCE installation](#installation-linux)
+- [🐧 Linux installation](#installation-linux)
 - [🪟 Windows installation](#installation-windows)
 
 ## Features
 
-- 🐧🪟 **Linux (XFCE) and Windows 10/11**: same behavior, same images, each with its own native installer.
+- 🐧🪟 **Linux (XFCE, GNOME, Cinnamon, MATE, KDE Plasma) and Windows 10/11**: same behavior, same images, each with its own native installer. The Linux desktop environment is auto-detected on every run, no configuration needed.
 - 🕐 **Fixed, configurable time slots**: sunrise, midday, sunset, and night, with whatever schedule you define (**or automatic, based on actual sunrise/sunset**, chosen during installation).
 - 🌧️ **Real-time weather**: if it's overcast or raining, uses a different image depending on the time of day (daytime, sunset, or night).
 - 🎨 **Crossfade transition** between one wallpaper and the next (Linux only, optional, requires ImageMagick).
@@ -22,7 +22,7 @@ Automatically changes your desktop wallpaper — on **XFCE** (Linux Mint XFCE, X
 
 ## Installation (Linux)
 
-Requirements: Linux Mint XFCE (or any XFCE-based distro) with `systemd`, `curl`, and `xfconf-query` (bundled with XFCE).
+Requirements: `systemd`, `curl`, and whichever command matches your desktop: `xfconf-query` (XFCE), `gsettings` (GNOME, Cinnamon, MATE), or `qdbus`/`qdbus6` (KDE Plasma). The desktop is auto-detected; you don't need to specify it.
 
 ```bash
 git clone https://github.com/agustincomolli/field-house.git

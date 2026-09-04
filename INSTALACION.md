@@ -9,7 +9,7 @@ Este documento explica en detalle cómo funciona cada parte del programa, y cóm
 ```
 field-house/
 ├── bin/
-│   └── change_wallpaper.sh           # Motor Linux/XFCE
+│   └── change_wallpaper.sh           # Motor Linux (multi-escritorio)
 ├── windows/
 │   ├── engine/
 │   │   ├── FieldHouseEngine.cs        # Motor Windows 10/11 (C#, compilado en la instalación)
@@ -190,26 +190,40 @@ Hay tres archivos de systemd:
 | `field-house.timer` | Dispara ese servicio cada hora (`OnCalendar=hourly`), con `Persistent=true` |
 | `field-house-login.service` | Corre el script una vez al iniciar sesión gráfica, con el flag `--reboot` |
 
-`field-house-login.service` existe además del `Persistent=true` del timer porque ese último corre "apenas es posible" tras el arranque, que puede ser antes de que XFCE termine de inicializar `xfconf`. El flag `--reboot` le agrega una espera (`ESPERA_INICIAL_SEGUNDOS`, 15s por defecto) para evitar ese problema, y además activa el reintento de clima del arranque por si la red todavía no está lista (ver sección Clima).
+`field-house-login.service` existe además del `Persistent=true` del timer porque ese último corre "apenas es posible" tras el arranque, que puede ser antes de que el escritorio termine de inicializar (el subsistema de configuración que corresponda: `xfconf` en XFCE, el bus de sesión D-Bus para `gsettings`/`qdbus` en los demás). El flag `--reboot` le agrega una espera (`ESPERA_INICIAL_SEGUNDOS`, 15s por defecto) para evitar ese problema, y además activa el reintento de ubicación/clima del arranque por si la red todavía no está lista (ver sección Clima).
 
 ### Verificación de imágenes
 
 Al arrancar, el script valida que las 9 imágenes de fondo existan en `CARPETA_FONDOS`. Si falta alguna, no aplica ningún cambio y lo deja registrado en el log — así te enterás de un nombre de archivo mal escrito o un reemplazo incompleto apenas corre el script, en vez de descubrirlo recién cuando le toque el turno a esa franja o clima puntual.
 
+### Escritorios soportados
+
+El escritorio se detecta automáticamente (`detectar_escritorio()`, vía `$XDG_CURRENT_DESKTOP` con `$DESKTOP_SESSION` como respaldo) en cada ejecución; no hay ningún paso de instalación ni campo de configuración para elegirlo a mano.
+
+| Escritorio | Mecanismo para aplicar el fondo |
+|---|---|
+| XFCE | `xfconf-query` (propiedades `last-image`) |
+| GNOME, Unity, Budgie | `gsettings set org.gnome.desktop.background` |
+| Cinnamon | `gsettings set org.cinnamon.desktop.background` |
+| MATE | `gsettings set org.mate.background` |
+| KDE Plasma | Script vía D-Bus a `plasmashell` (`qdbus6` o `qdbus`) |
+
+Si no se reconoce el escritorio actual, el script lo registra en el log y no aplica ningún fondo (todo lo demás — franjas horarias, clima, log — sigue funcionando igual). La transición de fundido (ImageMagick) solo está implementada para XFCE por ahora: en los demás escritorios el cambio de fondo es directo, sin animación (igual que en Windows).
+
 ### Multi-monitor
 
-El script recorre todas las propiedades `last-image` de xfconf (una por monitor/workspace) y las actualiza a todas, así que si tenés más de un monitor o varios espacios de trabajo, todos quedan sincronizados. La lista de propiedades se obtiene **una sola vez** por ejecución y se reutiliza en los pasos de la transición, evitando decenas de llamadas a `xfconf-query`.
+En XFCE, el script recorre todas las propiedades `last-image` de xfconf (una por monitor/workspace) y las actualiza a todas, así que si tenés más de un monitor o varios espacios de trabajo, todos quedan sincronizados. La lista de propiedades se obtiene **una sola vez** por ejecución y se reutiliza en los pasos de la transición, evitando decenas de llamadas a `xfconf-query`. En GNOME/Cinnamon/MATE/KDE, una sola propiedad de fondo aplica a todos los monitores a la vez (no hay nada que iterar).
 
 ## Validaciones y comportamiento robusto
 
-El objetivo de diseño es **degradar con elegancia pero fallar con claridad**: el script sobrevive sin red, sin ImageMagick o sin una sesión XFCE lista, pero cuando algo está mal configurado lo anuncia bien y temprano, en vez de producir fondos raros o fallos silenciosos.
+El objetivo de diseño es **degradar con elegancia pero fallar con claridad**: el script sobrevive sin red, sin ImageMagick o sin una sesión gráfica lista, pero cuando algo está mal configurado lo anuncia bien y temprano, en vez de producir fondos raros o fallos silenciosos.
 
-- **Dependencias verificadas al inicio.** Antes de tocar nada, se comprueba que existan `curl`, `xfconf-query` (solo en ejecución real, no en `--dry-run`), `awk`, `grep`, `tr`, `seq`, `head` y `cut`. Si falta alguna, el script termina de inmediato con un mensaje en el log. ImageMagick (`convert`/`identify`) es opcional: solo genera un aviso.
+- **Dependencias verificadas al inicio.** Antes de tocar nada, se comprueba que existan `curl`, `awk`, `grep`, `tr`, `seq`, `head`, `cut`, y el comando de fondo que corresponda al escritorio detectado — `xfconf-query`, `gsettings` o `qdbus`/`qdbus6` — (solo en ejecución real, no en `--dry-run`). Si falta alguna, el script termina de inmediato con un mensaje en el log. ImageMagick (`convert`/`identify`) es opcional: solo genera un aviso.
 - **Configuración validada.** Tras cargar `config.conf` se validan: `MODO_HORARIOS` (`fijo` o `auto`), las `HORA_INICIO_*` (formato `HH:MM` válido), `PASOS_TRANSICION`, `PAUSA_ENTRE_PASOS` y los valores numéricos restantes, además de que `CARPETA_FONDOS` sea un directorio. Un valor inválido detiene la ejecución con un mensaje que dice qué variable está mal y cómo corregirla.
 - **Temporales seguros y limpios.** Los frames de la transición van a un directorio de `mktemp` (permisos privados), y un `trap` lo elimina al salir — normal o interrumpidamente. Si el proceso se caía a mitad en versiones viejas, quedaban carpetas huérfanas en `/tmp`; eso ya no pasa.
-- **Sin fallos silenciosos en xfconf.** Si alguna propiedad `last-image` falla al asignarse, se acumulan y se registran en el log (con las propiedades que fallaron). Si no hay ninguna propiedad `last-image` (perfil XFCE recién creado), se avisa explícitamente.
+- **Sin fallos silenciosos al aplicar el fondo.** En XFCE, si alguna propiedad `last-image` falla al asignarse, se acumulan y se registran en el log (con las propiedades que fallaron); si no hay ninguna propiedad `last-image` (perfil recién creado), se avisa explícitamente. En los demás escritorios, un `gsettings`/`qdbus` que falle también queda registrado con el detalle.
 - **Log rotado.** Cada línea es una ejecución (24/día), por lo que crece poco, pero aún así el log se rota a `log.txt.1` cuando supera `MAX_LOG_BYTES` (1 MiB por defecto), conservando solo la copia más reciente.
-- **`--dry-run` para diagnóstico.** `change_wallpaper.sh --dry-run` (opcionalmente con `--reboot`) imprime la franja, el clima y el fondo que se aplicaría **sin** tocar xfconf, sin escribir logs ni estado, y sin esperas ni lock. Sirve para probar la lógica de clima/franjas en cualquier máquina, y es lo primero que pedimos en un reporte de problema.
+- **`--dry-run` para diagnóstico.** `change_wallpaper.sh --dry-run` (opcionalmente con `--reboot`) imprime la franja, el clima y el fondo que se aplicaría **sin** tocar el escritorio real, sin escribir logs ni estado, y sin esperas ni lock. Sirve para probar la lógica de clima/franjas en cualquier máquina —incluso sin sesión gráfica— y es lo primero que pedimos en un reporte de problema.
 
 ## Tests y CI
 
@@ -274,7 +288,7 @@ A diferencia de Linux (donde el motor es un script bash interpretado por `bash` 
 | Concepto | Linux | Windows |
 |---|---|---|
 | Motor | `bin/change_wallpaper.sh` (bash, interpretado en cada ejecución) | `FieldHouseEngine.exe` (C#, compilado una vez en la instalación) |
-| Aplicar el fondo | `xfconf-query` (propiedades `last-image` de XFCE) | `SystemParametersInfo` (Win32, vía P/Invoke) — aplica a todos los monitores de una vez, sin iterar |
+| Aplicar el fondo | `xfconf-query`, `gsettings` o `qdbus`/`qdbus6`, según el escritorio detectado | `SystemParametersInfo` (Win32, vía P/Invoke) — aplica a todos los monitores de una vez, sin iterar |
 | Ejecución periódica | Timer de `systemd` (usuario) | Tarea Programada `FieldHouseWallpaper` (disparador horario), ejecuta el `.exe` directo |
 | Ejecución al iniciar sesión | `field-house-login.service` (`--reboot`) | Tarea Programada `FieldHouseWallpaperLogin` (disparador `AtLogOn`), ejecuta el `.exe` con `--reboot` |
 | Lock anti-concurrencia | `flock` sobre un archivo | `System.Threading.Mutex` con nombre de sesión |
@@ -357,11 +371,14 @@ El script valida la configuración antes de aplicar nada. Editá el valor indica
 **El log dice `ERROR: faltan comandos requeridos`:**
 Hace falta un binario del sistema. El mensaje lista cuáles. `curl` (u otro desde la lista) se instala con `sudo apt install <paquete>`.
 
-**El log dice `AVISO: no se encontró ninguna propiedad 'last-image'`:**
+**El log dice `AVISO: no se encontró ninguna propiedad 'last-image'` (solo XFCE):**
 El script no ve propiedades de fondo en xfconf. Esto pasa si la sesión gráfica no está lista (¿se corrió a mano sin una sesión XFCE abierta?), o con un perfil de XFCE recién creado. Corré `xfconf-query -c xfce4-desktop -l` para ver si existen; si no, creá un fondo desde el menú de XFCE una vez.
 
-**El log dice que fallaron propiedad(es) `last-image` al aplicar:**
-El script intentó aplicar el fondo pero una o más propiedades rechazaron el valor (suele ser un permiso de sesión o DISPLAY). Revisá la lista de propiedades que aparece en el mensaje y verificá que la sesión gráfica esté activa.
+**El log dice que fallaron propiedad(es) `last-image` al aplicar (XFCE), o que falló `gsettings`/`qdbus` (GNOME/Cinnamon/MATE/KDE):**
+El script intentó aplicar el fondo pero el comando correspondiente rechazó el valor (suele ser un permiso de sesión o `DISPLAY`/`DBUS_SESSION_BUS_ADDRESS` mal resueltos). Revisá el detalle en el mensaje y verificá que la sesión gráfica esté activa.
+
+**El log dice `AVISO: no se reconoció el entorno de escritorio`:**
+`$XDG_CURRENT_DESKTOP` (o `$DESKTOP_SESSION` como respaldo) no coincide con ninguno de los soportados: XFCE, GNOME, Cinnamon, MATE, KDE Plasma. Comprobá con `echo $XDG_CURRENT_DESKTOP` en una terminal de esa sesión gráfica qué valor trae tu escritorio; si te parece que debería reconocerse (por ejemplo una variante o fork de alguno de los soportados), abrí un issue con ese valor.
 
 **Quiero ver qué fondo se va a aplicar sin esperar a la próxima hora ni ensuciar el log:**
 `~/.local/share/field-house/bin/change_wallpaper.sh --dry-run`. Imprime la franja, el clima y el fondo elegido sin tocar nada.
