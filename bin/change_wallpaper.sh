@@ -667,6 +667,37 @@ transicionar_fondo() {
     TMP_TRANSICION=""
 }
 
+# extraer_symbol_code_primer_timeseries <json>
+# Extrae el symbol_code del primer timeseries de una respuesta de
+# Locationforecast 2.0 (compact), probando next_1_hours y cayendo a
+# next_6_hours si el primero no está presente.
+#
+# El JSON llega en una sola línea, sin saltos, y grep -E no soporta
+# cuantificadores no-greedy: un patrón como '"next_1_hours".*"symbol_code"'
+# no se detiene en el primer objeto que cierra, sino que sigue de largo
+# hasta el ÚLTIMO "symbol_code" de TODO el array de timeseries, mezclando
+# el pronóstico de ahora con el de dentro de varios días. Para evitarlo, acá
+# se aísla primero el primer elemento del array (todo lo que sigue al cierre
+# de ese elemento y la apertura del siguiente, vía el patrón "},{"time"", se
+# descarta), y recién dentro de ese fragmento acotado se busca el
+# symbol_code — ahí ya no hay otro timeseries con el que pueda mezclarse.
+extraer_symbol_code_primer_timeseries() {
+    local respuesta="$1"
+    local primer_ts resto symbol
+
+    primer_ts=$(printf '%s' "$respuesta" | sed -E 's/\}\},\{"time".*//')
+
+    resto="${primer_ts#*\"next_1_hours\"}"
+    if [ "$resto" = "$primer_ts" ]; then
+        resto="${primer_ts#*\"next_6_hours\"}"
+        [ "$resto" = "$primer_ts" ] && return 1
+    fi
+
+    symbol=$(printf '%s' "$resto" | grep -oE '"symbol_code" *: *"[^"]+"' | head -n 1 | cut -d'"' -f4)
+    [ -z "$symbol" ] && return 1
+    printf '%s' "$symbol"
+}
+
 # consultar_clima <lat> <lon>
 # Consulta la API oficial Locationforecast 2.0 (compact) de MET Norway UNA
 # vez (con timeout corto de conexión) y devuelve el symbol_code del pronóstico
@@ -694,14 +725,7 @@ consultar_clima() {
     respuesta=$(curl -s --connect-timeout 2 --max-time 6 -H "$MET_USER_AGENT" \
         "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat}&lon=${lon}" 2>/dev/null)
 
-    # Se busca el symbol_code del primer tramo (next_1_hours) del primer
-    # timeseries, que es el pronóstico más inmediato. Si el pronóstico más
-    # cercano no trae next_1_hours (pasa en horizontes lejanos, no debería
-    # ocurrir para "ahora" pero por robustez), se cae a next_6_hours.
-    symbol=$(printf '%s' "$respuesta" | grep -oE '"next_1_hours" *: *\{.*"symbol_code" *: *"[^"]+"' | head -n 1 | grep -oE '"symbol_code" *: *"[^"]+"' | grep -oE '"[^"]+"$' | tr -d '"')
-    if [ -z "$symbol" ]; then
-        symbol=$(printf '%s' "$respuesta" | grep -oE '"next_6_hours" *: *\{.*"symbol_code" *: *"[^"]+"' | head -n 1 | grep -oE '"symbol_code" *: *"[^"]+"' | grep -oE '"[^"]+"$' | tr -d '"')
-    fi
+    symbol=$(extraer_symbol_code_primer_timeseries "$respuesta")
     symbol=$(printf '%s' "$symbol" | tr '[:upper:]' '[:lower:]')
 
     if [ -z "$symbol" ]; then

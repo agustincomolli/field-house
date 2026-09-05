@@ -26,7 +26,6 @@ jobs:
           mkdir -p "$HOME/.config/field-house"
           cat > "$HOME/.config/field-house/config.conf" <<EOF
           CARPETA_FONDOS="$GITHUB_WORKSPACE/fondos"
-          CIUDAD="CanuelasAR"
           HORA_INICIO_AMANECER="06:00"
           HORA_INICIO_MEDIODIA="10:00"
           HORA_INICIO_ATARDECER="15:00"
@@ -39,17 +38,17 @@ jobs:
           EOF
           bash bin/change_wallpaper.sh --dry-run
           bash bin/change_wallpaper.sh --version
-      - name: Smoke test — modo auto (salida/puesta real del sol, contra wttr.in)
+      - name: Smoke test — modo auto (salida/puesta real del sol, contra met.no)
         run: |
           # A diferencia del test anterior, ejercita MODO_HORARIOS="auto" con
           # conectividad real de los runners de GitHub Actions: cubre el
-          # camino feliz de consultar_horarios_sol() (parseo del JSON j1,
-          # conversión AM/PM, cálculo de mediodía/noche), que el smoke test
-          # de modo fijo no toca en absoluto.
+          # camino feliz de obtener_ubicacion() (geolocalización por IP) y
+          # consultar_horarios_sol() (parseo del JSON de la API Sunrise 3.0
+          # de met.no, cálculo de mediodía/noche), que el smoke test de modo
+          # fijo no toca en absoluto.
           mkdir -p "$HOME/.config/field-house"
           cat > "$HOME/.config/field-house/config.conf" <<EOF
           CARPETA_FONDOS="$GITHUB_WORKSPACE/fondos"
-          CIUDAD="CanuelasAR"
           MODO_HORARIOS="auto"
           HORA_INICIO_AMANECER="06:00"
           HORA_INICIO_MEDIODIA="10:00"
@@ -63,12 +62,13 @@ jobs:
           EOF
           SALIDA=$(bash bin/change_wallpaper.sh --dry-run)
           echo "$SALIDA"
-          # Si wttr.in no pudo resolver la ciudad ese día, el script degrada
-          # a horarios fijos y lo dice explícitamente; cualquier otro caso
-          # debe mostrar la línea "Horarios según el sol: ...".
+          # Si met.no/ip-api.com no pudieron resolverse ese día, el script
+          # degrada a horarios fijos y lo dice explícitamente; cualquier
+          # otro caso debe mostrar la línea "Horarios según el sol: ...".
           if ! echo "$SALIDA" | grep -q "Horarios según el sol:" \
-              && ! echo "$SALIDA" | grep -q "no se pudo obtener la salida/puesta del sol"; then
-            echo "::error::modo auto no generó ninguno de los dos mensajes esperados (ni horarios del sol ni fallback documentado)"
+              && ! echo "$SALIDA" | grep -q "no se pudo obtener la salida/puesta del sol" \
+              && ! echo "$SALIDA" | grep -q "no se pudo detectar la ubicación"; then
+            echo "::error::modo auto no generó ninguno de los mensajes esperados (ni horarios del sol, ni fallback de sol, ni fallback de ubicación)"
             exit 1
           fi
       - name: Smoke test — variables nuevas explícitas (MODO_HORARIOS, TTL_CACHE_CLIMA, MAX_LOG_BYTES)
@@ -79,7 +79,6 @@ jobs:
           mkdir -p "$HOME/.config/field-house"
           cat > "$HOME/.config/field-house/config.conf" <<EOF
           CARPETA_FONDOS="$GITHUB_WORKSPACE/fondos"
-          CIUDAD="CanuelasAR"
           MODO_HORARIOS="fijo"
           HORA_INICIO_AMANECER="06:00"
           HORA_INICIO_MEDIODIA="10:00"
@@ -94,16 +93,15 @@ jobs:
           MAX_LOG_BYTES=1048576
           EOF
           bash bin/change_wallpaper.sh --dry-run
-      - name: Smoke test — configuración inválida debe fallar (CIUDAD con espacio)
+      - name: Smoke test — configuración inválida debe fallar (MODO_HORARIOS inválido)
         run: |
           # Confirma que validar_configuracion() realmente detiene la
           # ejecución (exit != 0) ante un valor inválido, en vez de
-          # continuar en silencio con un valor que rompería la consulta
-          # a wttr.in más adelante.
+          # continuar en silencio con un modo de horarios que no existe.
           mkdir -p "$HOME/.config/field-house"
           cat > "$HOME/.config/field-house/config.conf" <<EOF
           CARPETA_FONDOS="$GITHUB_WORKSPACE/fondos"
-          CIUDAD="Buenos Aires"
+          MODO_HORARIOS="siempre"
           HORA_INICIO_AMANECER="06:00"
           HORA_INICIO_MEDIODIA="10:00"
           HORA_INICIO_ATARDECER="15:00"
@@ -115,10 +113,10 @@ jobs:
           ESPERA_REINTENTO_CLIMA=60
           EOF
           if bash bin/change_wallpaper.sh --dry-run; then
-            echo "::error::el script debería haber fallado con CIUDAD inválida ('Buenos Aires') y no lo hizo"
+            echo "::error::el script debería haber fallado con MODO_HORARIOS inválido ('siempre') y no lo hizo"
             exit 1
           fi
-          echo "OK: el script rechazó correctamente la ciudad inválida."
+          echo "OK: el script rechazó correctamente el modo de horarios inválido."
   powershell-checks:
     runs-on: windows-latest
     steps:
@@ -209,7 +207,6 @@ jobs:
           New-Item -ItemType Directory -Path "$env:APPDATA\FieldHouse" -Force | Out-Null
           $config = [PSCustomObject]@{
             CarpetaFondos          = "$env:GITHUB_WORKSPACE\fondos"
-            Ciudad                 = 'CanuelasAR'
             ModoHorarios            = 'fijo'
             HoraInicioAmanecer     = '06:00'
             HoraInicioMediodia     = '10:00'
@@ -244,18 +241,17 @@ jobs:
             exit 1
           }
 
-      - name: Smoke test — modo auto (salida/puesta real del sol, contra wttr.in)
+      - name: Smoke test — modo auto (salida/puesta real del sol, contra met.no)
         shell: pwsh
         run: |
           # Igual que el equivalente bash del job de Linux: ejercita el
-          # camino real de ObtenerHorariosSol (parseo del JSON j1 de
-          # wttr.in vía MiniJson, conversión de horas 12h y cálculo de
-          # mediodía/noche), con conectividad real de los runners de
-          # GitHub Actions.
+          # camino real de ObtenerUbicacion (geolocalización por IP) y
+          # ObtenerHorariosSol (parseo del JSON de la API Sunrise 3.0 de
+          # met.no vía MiniJson y cálculo de mediodía/noche), con
+          # conectividad real de los runners de GitHub Actions.
           $ErrorActionPreference = 'Stop'
           $config = [PSCustomObject]@{
             CarpetaFondos          = "$env:GITHUB_WORKSPACE\fondos"
-            Ciudad                 = 'CanuelasAR'
             ModoHorarios            = 'auto'
             HoraInicioAmanecer     = '06:00'
             HoraInicioMediodia     = '10:00'
@@ -281,12 +277,13 @@ jobs:
           $textoCompleto = $salida -join "`n"
           $tieneSol = $textoCompleto -match 'Horarios .*sol:'
           $tieneFallback = $textoCompleto -match 'no se pudo obtener la salida/puesta del sol'
-          if (-not $tieneSol -and -not $tieneFallback) {
-            Write-Host "::error::modo auto no generó ninguno de los dos mensajes esperados (ni horarios del sol ni fallback documentado)"
+          $tieneFallbackUbicacion = $textoCompleto -match 'no se pudo detectar la ubicación'
+          if (-not $tieneSol -and -not $tieneFallback -and -not $tieneFallbackUbicacion) {
+            Write-Host "::error::modo auto no generó ninguno de los mensajes esperados (ni horarios del sol, ni fallback de sol, ni fallback de ubicación)"
             exit 1
           }
 
-      - name: Smoke test — configuración inválida debe fallar (Ciudad con espacio)
+      - name: Smoke test — configuración inválida debe fallar (ModoHorarios inválido)
         shell: pwsh
         run: |
           # Confirma que ValidarConfiguracion realmente detiene la ejecución
@@ -295,8 +292,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $config = [PSCustomObject]@{
             CarpetaFondos          = "$env:GITHUB_WORKSPACE\fondos"
-            Ciudad                 = 'Buenos Aires'
-            ModoHorarios            = 'fijo'
+            ModoHorarios            = 'siempre'
             HoraInicioAmanecer     = '06:00'
             HoraInicioMediodia     = '10:00'
             HoraInicioAtardecer    = '15:00'
@@ -312,8 +308,8 @@ jobs:
           $proceso = Start-Process -FilePath (Resolve-Path .\FieldHouseEngine.exe) -ArgumentList '--dry-run' -Wait -PassThru
           $codigo = $proceso.ExitCode
           if ($codigo -eq 0) {
-            Write-Host "::error::el motor debería haber fallado con Ciudad inválida ('Buenos Aires') y no lo hizo"
+            Write-Host "::error::el motor debería haber fallado con ModoHorarios inválido ('siempre') y no lo hizo"
             exit 1
           }
-          Write-Host "OK: el motor rechazó correctamente la ciudad inválida (exit code $codigo)."
+          Write-Host "OK: el motor rechazó correctamente el modo de horarios inválido (exit code $codigo)."
           exit 0

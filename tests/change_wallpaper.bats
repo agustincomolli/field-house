@@ -437,6 +437,50 @@ decidir_fondo_test() {
 }
 
 # ----------------------------------------------------------------------------
+# extraer_symbol_code_primer_timeseries
+# ----------------------------------------------------------------------------
+# Regresión de un bug real detectado en CI: el JSON de Locationforecast llega
+# en una sola línea, y una regex ingenua con ".*" (grep -E no soporta
+# cuantificadores no-greedy) capturaba el symbol_code de TODOS los
+# timeseries del array en vez de solo el primero, concatenándolos con salto
+# de línea. Estos tests fijan el contrato correcto contra respuestas
+# simuladas realistas, sin red.
+
+@test "extraer_symbol_code_primer_timeseries: toma el symbol_code del primer timeseries, no de los siguientes" {
+    local json='{"properties":{"timeseries":[{"time":"T1","data":{"next_1_hours":{"summary":{"symbol_code":"cloudy"}}}}},{"time":"T2","data":{"next_1_hours":{"summary":{"symbol_code":"rain"}}}}},{"time":"T3","data":{"next_1_hours":{"summary":{"symbol_code":"snow"}}}}}]}}'
+    result="$(extraer_symbol_code_primer_timeseries "$json")"
+    [ "$result" = "cloudy" ]
+    # Ademas de tomar el correcto, el resultado debe ser una sola linea
+    # (el bug original devolvia varios symbol_code separados por \n).
+    [ "$(printf '%s' "$result" | wc -l)" -eq 0 ]
+}
+
+@test "extraer_symbol_code_primer_timeseries: funciona sin importar el orden de las claves dentro de next_1_hours" {
+    local json='{"properties":{"timeseries":[{"time":"T1","data":{"next_1_hours":{"details":{"precipitation_amount":0.0},"summary":{"symbol_code":"heavyrain"}}}}},{"time":"T2","data":{"next_1_hours":{"summary":{"symbol_code":"NO_DEBE_APARECER"}}}}}]}}'
+    result="$(extraer_symbol_code_primer_timeseries "$json")"
+    [ "$result" = "heavyrain" ]
+}
+
+@test "extraer_symbol_code_primer_timeseries: si el primer timeseries no tiene next_1_hours, cae a next_6_hours del MISMO timeseries" {
+    local json='{"properties":{"timeseries":[{"time":"T1","data":{"next_6_hours":{"summary":{"symbol_code":"fair_day"}}}}},{"time":"T2","data":{"next_1_hours":{"summary":{"symbol_code":"NO_DEBE_APARECER"}}}}}]}}'
+    result="$(extraer_symbol_code_primer_timeseries "$json")"
+    [ "$result" = "fair_day" ]
+}
+
+@test "extraer_symbol_code_primer_timeseries: respuesta con muchos timeseries (simula el caso real de CI) toma solo el primero" {
+    local json='{"properties":{"timeseries":[{"time":"T1","data":{"next_1_hours":{"summary":{"symbol_code":"clearsky_night"}}}}},{"time":"T2","data":{"next_1_hours":{"summary":{"symbol_code":"rainshowers_day"}}}}},{"time":"T3","data":{"next_1_hours":{"summary":{"symbol_code":"lightrainshowers_day"}}}}},{"time":"T4","data":{"next_1_hours":{"summary":{"symbol_code":"fair_day"}}}}}]}}'
+    result="$(extraer_symbol_code_primer_timeseries "$json")"
+    [ "$result" = "clearsky_night" ]
+}
+
+@test "extraer_symbol_code_primer_timeseries: respuesta sin symbol_code en ningun lado devuelve vacio (exit 1)" {
+    local json='{"properties":{"timeseries":[{"time":"T1","data":{"instant":{"details":{}}}}}]}}'
+    run extraer_symbol_code_primer_timeseries "$json"
+    [ "$status" -eq 1 ]
+    [ "$output" = "" ]
+}
+
+# ----------------------------------------------------------------------------
 # consultar_clima — contrato de normalización (sin red real)
 # ----------------------------------------------------------------------------
 # consultar_clima() llama a curl de verdad; no se testea acá su integración
