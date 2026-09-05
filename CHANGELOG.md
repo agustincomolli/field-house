@@ -4,6 +4,13 @@ Todas las versiones notables de este proyecto se documentan acá.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.1.0/), y las versiones siguen [SemVer](https://semver.org/lang/es/) (MAJOR.MINOR.PATCH).
 
+## [1.4.0](https://github.com/agustincomolli/field-house/compare/v1.3.6...v1.4.0) (2026-09-05)
+
+
+### Features
+
+* Implementar función para extraer el symbol_code del primer timeseries en la respuesta de la API de MET Norway y agregar pruebas unitarias ([331418f](https://github.com/agustincomolli/field-house/commit/331418fe475f186855f930094c334fabf2ab386b))
+
 ## [1.3.5](https://github.com/agustincomolli/field-house/compare/v1.3.4...v1.3.5) (2026-08-26)
 
 
